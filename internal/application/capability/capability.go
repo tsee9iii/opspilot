@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
-	appagent "github.com/opspilot/opspilot/internal/application/agent"
-	domainagent "github.com/opspilot/opspilot/internal/domain/agent"
+	appagent "github.com/tsee9iii/opspilot/internal/application/agent"
+	domainagent "github.com/tsee9iii/opspilot/internal/domain/agent"
 )
 
 var (
@@ -83,6 +83,10 @@ func (uc *SyncUseCase) Sync(ctx context.Context, req SyncRequest) (SyncResponse,
 	}
 	if !ok {
 		return SyncResponse{}, appagent.ErrAgentSecretMismatch
+	}
+
+	if ag.Status == appagent.StatusUnregistered {
+		return SyncResponse{}, appagent.ErrAgentUnregistered
 	}
 
 	count := 0

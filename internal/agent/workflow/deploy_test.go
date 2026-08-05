@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opspilot/opspilot/internal/agent/project"
+	"github.com/tsee9iii/opspilot/internal/agent/project"
 )
 
 func strPtr(s string) *string {

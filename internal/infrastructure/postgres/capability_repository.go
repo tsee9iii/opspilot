@@ -8,8 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/opspilot/opspilot/gen/postgresql"
-	appcapability "github.com/opspilot/opspilot/internal/application/capability"
+	"github.com/tsee9iii/opspilot/gen/postgresql"
+	appcapability "github.com/tsee9iii/opspilot/internal/application/capability"
 )
 
 var _ appcapability.CapabilityRepository = (*CapabilityRepository)(nil)

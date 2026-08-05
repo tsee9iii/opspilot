@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/opspilot/opspilot/internal/application/command"
+	"github.com/tsee9iii/opspilot/internal/application/command"
 )
 
 type CommandHandler struct {

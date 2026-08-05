@@ -9,7 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/opspilot/opspilot/internal/agent/project"
+	"github.com/tsee9iii/opspilot/internal/agent/project"
 )
 
 type Config struct {

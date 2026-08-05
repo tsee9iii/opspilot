@@ -18,14 +18,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
-	"github.com/opspilot/opspilot/internal/application/agent"
-	appcapability "github.com/opspilot/opspilot/internal/application/capability"
-	appcommand "github.com/opspilot/opspilot/internal/application/command"
-	"github.com/opspilot/opspilot/internal/infrastructure/postgres"
-	"github.com/opspilot/opspilot/internal/infrastructure/security"
-	httpx "github.com/opspilot/opspilot/internal/transport/http"
-	"github.com/opspilot/opspilot/pkg/config"
-	"github.com/opspilot/opspilot/pkg/logger"
+	"github.com/tsee9iii/opspilot/internal/application/agent"
+	appcapability "github.com/tsee9iii/opspilot/internal/application/capability"
+	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
+	"github.com/tsee9iii/opspilot/internal/infrastructure/postgres"
+	"github.com/tsee9iii/opspilot/internal/infrastructure/security"
+	httpx "github.com/tsee9iii/opspilot/internal/transport/http"
+	"github.com/tsee9iii/opspilot/pkg/config"
+	"github.com/tsee9iii/opspilot/pkg/logger"
 )
 
 type App struct {
@@ -113,6 +113,7 @@ func (a *App) buildHandler() http.Handler {
 		secretHasher,
 	)
 	heartbeatUC := agent.NewHeartbeatUseCase(agentRepo, secretHasher)
+	unregisterUC := agent.NewUnregisterUseCase(agentRepo, secretHasher)
 	commandRepo := postgres.NewCommandRepository(a.pool)
 	capabilityRepo := postgres.NewCapabilityRepository(a.pool)
 	createCommandUC := appcommand.NewCreateUseCase(commandRepo, capabilityRepo)
@@ -121,7 +122,7 @@ func (a *App) buildHandler() http.Handler {
 	approvalCommandUC := appcommand.NewApprovalUseCase(commandRepo)
 	capabilityUC := appcapability.NewSyncUseCase(agentRepo, capabilityRepo, secretHasher)
 	return httpx.NewRouter(
-		httpx.NewAgentHandler(registerUC, heartbeatUC),
+		httpx.NewAgentHandler(registerUC, heartbeatUC, unregisterUC),
 		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC, approvalCommandUC),
 		httpx.NewCapabilityHandler(capabilityUC),
 	)

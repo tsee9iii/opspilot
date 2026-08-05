@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/opspilot/opspilot/internal/agent"
-	"github.com/opspilot/opspilot/internal/agent/project"
+	"github.com/tsee9iii/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent/project"
 )
 
 // Executor runs workflows by executing each step's tool through the agent's

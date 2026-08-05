@@ -1,4 +1,4 @@
-module github.com/opspilot/opspilot
+module github.com/tsee9iii/opspilot
 
 go 1.25
 

@@ -20,6 +20,7 @@ Architectural decisions are documented in:
 | HTTP server with graceful shutdown               | `cmd/central`                   | —                        | Implemented     |
 | Agent registration (HMAC token, Argon2id secret) | `POST /api/v1/agents/register`  | startup                  | Implemented     |
 | Agent heartbeat                                  | `POST /api/v1/agents/heartbeat` | 30s loop                 | Implemented     |
+| Agent unregister (lifecycle)                     | `POST /api/v1/agents/unregister` | —                        | Implemented     |
 | Command creation                                 | `POST /api/v1/commands`         | —                        | Implemented     |
 | Command leasing (atomic, FIFO)                   | `POST /api/v1/commands/lease`   | poll loop                | Implemented     |
 | Command lifecycle transitions                    | `start` / `complete` / `fail`   | reports them             | Implemented     |
@@ -53,6 +54,7 @@ Architectural decisions are documented in:
 | Workflow engine (foundation) | — | step state machine, simulated execution | Implemented |
 | Deploy workflow (execution) | — | git.pull → restart → optional http.check via RegistryExecutor | Implemented |
 | Diagnose workflow (execution) | — | system.* + platform + logs + optional http.check, continue-on-failure | Implemented |
+| Agent installer (Phase 1)                        | —                               | `scripts/install.sh`     | Implemented     |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -68,6 +70,7 @@ All JSON. Errors use `{"error":{"code","message"}}`.
 | GET    | `/healthz`                  | —               | `200 ok`                                 | —                                                                            |
 | POST   | `/api/v1/agents/register`   | token           | `201 {agent_id,status}`                  | 400 `validation_error`, 401 `invalid_token`, 409 `token_already_used`, 500   |
 | POST   | `/api/v1/agents/heartbeat`  | agent_id+secret | `200 {status,next_heartbeat}`            | 400, 401 `invalid_credentials`, 500                                          |
+| POST   | `/api/v1/agents/unregister` | agent_id+secret | `200 {status:"unregistered"}`           | 400, 401 `invalid_credentials`, 404 `agent_not_found`, 500                   |
 | POST   | `/api/v1/commands`          | —               | `201 {command_id,status}`                | 400, 500                                                                     |
 | POST   | `/api/v1/commands/lease`    | —               | `200 {command_id,tool,payload}` or `204` | 400, 500                                                                     |
 | POST   | `/api/v1/commands/start`    | —               | `200 {command_id,status}`                | 400, 403 `command_not_owned`, 404 `not_found`, 409 `invalid_transition`, 500 |
@@ -80,6 +83,7 @@ Request bodies:
 
 - `register`: `registration_token`, `secret`, `version`, `server{hostname,environment}`
 - `heartbeat`: `agent_id`, `secret`
+- `unregister`: `agent_id`, `secret`
 - `create`: `agent_id`, `tool`, `payload` (JSON object)
 - `lease`: `agent_id`
 - `start`/`complete`/`fail`: `agent_id`, `command_id` (+ `result` for complete, `error` for fail)
@@ -88,7 +92,7 @@ Request bodies:
 
 ## 3. Database schema
 
-Migrations (`sql/migrations/0001..0009`):
+Migrations (`sql/migrations/0001..0010`):
 
 - `0001_init.sql` — `servers`, `agents`, `commands`
 - `0002_agent_auth.sql` — `registration_tokens`
@@ -101,13 +105,17 @@ Migrations (`sql/migrations/0001..0009`):
   `approved`) and `commands.confirmed_at`
 - `0009_capability_availability.sql` — adds `capabilities.available` (default
   `true`) and `capabilities.unavailable_reason` (default `''`)
+- `0010_agent_unregister.sql` — restricts `agents.status` to
+  `online` / `offline` / `unregistered` via a CHECK constraint and backfills
+  existing agents to `online`
 
 Tables:
 
 - **servers** — `id`, `name`, `hostname`, `environment`, `status`, `created_at`,
   `updated_at`; `UNIQUE (hostname, environment)`.
 - **agents** — `id`, `server_id` FK, `secret` (Argon2id hash, see §8), `version`,
-  `status`, `last_heartbeat`, `created_at`, `updated_at`.
+  `status` (`online` | `offline` | `unregistered`), `last_heartbeat`,
+  `created_at`, `updated_at`.
 - **commands** — `id`, `agent_id` FK, `tool_name`, `payload` JSONB, `status`,
   `result` JSONB, `error`, `leased_at`, `lease_owner`, `started_at`,
   `completed_at`, `confirmation_status` (`approved` | `pending`, default
@@ -408,8 +416,10 @@ token)` hex, never plaintext. Registration consumes the row atomically; a
   replay returns `409 token_already_used`. Expired/revoked tokens return
   `401 invalid_token`.
 - **Agent secrets**: stored as Argon2id hashes. Registration hashes the secret;
-  heartbeat and capability sync verify the presented secret against the stored
-  hash (`401 invalid_credentials` on mismatch).
+  heartbeat, capability sync, and unregister verify the presented secret
+  against the stored hash (`401 invalid_credentials` on mismatch). Agents whose
+  status is `unregistered` are rejected with `401 invalid_credentials` on
+  heartbeat and capability sync (§18).
 - Command create/lease/transition endpoints are **not authenticated** (no
   secret check); capability sync and heartbeat are.
 
@@ -638,3 +648,97 @@ docs/                   architecture, implementation, roadmap, adr/
 - **Confirmation**: no approval handling is implemented — a workflow assumes
   it is already approved. The existing confirmation framework (§13) is reused
   exactly as-is.
+
+## 17. Agent installer (Phase 1)
+
+- **Purpose**: a production installer (`scripts/install.sh`) that downloads the
+  latest released `opspilot-agent` binary from GitHub Releases and installs it
+  as a systemd service on a Linux host.
+- **Scope**: the installer does **not** register the agent, does **not** contact
+  the Central server, and does **not** clone the repository. No Go code is
+  involved; the config template is created for the operator to fill in, after
+  which the service must be restarted.
+- **Platform detection**: Linux only; `uname -m` maps `x86_64 → amd64` and
+  `aarch64 → arm64`. Anything else fails with
+  `unsupported OS` / `unsupported architecture`.
+- **Release assets** (published on GitHub Releases per architecture):
+  `opspilot-agent-linux-amd64`, `opspilot-agent-linux-arm64`. The asset is
+  fetched from `https://github.com/opspilot/opspilot/releases/latest/download/<asset>`
+  via `curl -fsSL --retry 3`. A downloaded file that is empty or not a Linux
+  ELF binary (checked via the `\x7fELF` magic) aborts the install.
+- **Binary install**: installed to `/usr/local/bin/opspilot-agent` with mode
+  `0755` via `install -m 0755`.
+- **Config**: `/etc/opspilot/` is created if missing; a minimal
+  `/etc/opspilot/agent.yaml` template is written (mode `0600`) **only** when it
+  does not already exist — an existing, operator-edited config is never
+  overwritten.
+- **System user**: the `opspilot` system user is created only when missing
+  (`useradd --system --no-create-home --user-group --shell /bin/false
+  opspilot`), guarded by `id opspilot`. The config directory and file are
+  `chown`ed to `opspilot:opspilot`.
+- **systemd service**: `/etc/systemd/system/opspilot-agent.service` with
+  `After=network-online.target` + `Wants=network-online.target`,
+  `ExecStart=/usr/local/bin/opspilot-agent`, `Restart=always`, `RestartSec=5`,
+  `User=opspilot`, `Group=opspilot`, `WantedBy=multi-user.target`. The service
+  is started via `systemctl daemon-reload; enable; start`.
+- **Idempotency**: safe to re-run — re-running does not re-create the user and
+  does not overwrite an existing config; the binary and unit file are simply
+  reinstalled and the service re-enabled.
+- **Completion output**: always prints the exact `Installation completed.` /
+  `Next step:` block directing the operator to edit `/etc/opspilot/agent.yaml`
+  and run `sudo systemctl restart opspilot-agent`.
+- **Verification**: `shellcheck` and `bash -n` clean; the full install flow
+  (platform detection, download + ELF check, binary/user/config/service install,
+  enable + start) and the idempotency behavior were verified in an
+  `ubuntu:24.04` container.
+
+## 18. Agent lifecycle: unregister
+
+- **Purpose**: complete the agent lifecycle with a central-side unregister
+  endpoint (`POST /api/v1/agents/unregister`) and a host-side uninstall script
+  (`scripts/uninstall-agent.sh`). Registration, installation, and the agent
+  runtime are unchanged.
+- **Authentication**: the endpoint reuses the existing agent authentication —
+  `agent_id` + `secret` verified against the stored Argon2id hash (same path as
+  heartbeat and capability sync, §8). Unknown agents return
+  `404 agent_not_found`; a secret mismatch returns `401 invalid_credentials`.
+- **Success behavior** (`internal/application/agent/unregister.go` +
+  `internal/infrastructure/postgres/agent_repository.go`):
+  - `agents.status` transitions to `unregistered`.
+  - The agent's capabilities are deleted (`DELETE FROM capabilities`).
+  - Project metadata is removed. Today project profiles are agent-side only
+    (§15) and have no central storage, so the unregister transaction deletes
+    what central owns (capabilities) and the unregistered status gate rejects
+    any future project-sync request through the same authentication path.
+  - The transition and capability deletion run in a single transaction via
+    `AgentRepository.UnregisterAgent`.
+  - Historical data is preserved: command rows (including results, errors, and
+    timestamps) are never touched. `commands` rows are kept because the agent
+    row itself is never deleted (deletion would cascade to commands).
+- **Idempotency**: unregistering an already-unregistered agent is a success
+  (`200 {"status":"unregistered"}`). The repository `MarkAgentUnregistered`
+  UPDATE is a no-op for an already-unregistered agent and the capability
+  deletion is naturally idempotent.
+- **Rejection of unregistered agents**: heartbeat and capability sync now
+  reject agents whose status is `unregistered` with
+  `401 invalid_credentials` (`internal/application/agent/heartbeat.go`,
+  `internal/application/capability/capability.go`). This is the same gate any
+  future project-sync endpoint will go through.
+- **Database** (`sql/migrations/0010_agent_unregister.sql`): adds a CHECK
+  constraint limiting `agents.status` to `online` / `offline` / `unregistered`
+  and backfills existing agents to `online`.
+- **Uninstall script** (`scripts/uninstall-agent.sh`, run as root):
+  1. `systemctl stop opspilot-agent`
+  2. `POST {central_url}/api/v1/agents/unregister` using `central_url`,
+     `agent_id`, and `secret` from `/etc/opspilot/agent.yaml`
+  3. On success it continues; on failure it prints a warning and asks
+     `Continue uninstall? (Y/n)` — declining aborts the uninstall.
+  4. `systemctl disable` + removes the systemd unit + `daemon-reload`
+  5. Removes `/usr/local/bin/opspilot-agent`
+  6. Asks `Remove configuration? (Y/n)` — only a `Y` removes `/etc/opspilot/`
+  7. Logs are never removed.
+- **Future work** (not implemented): `install-agent.sh` bootstrap, bootstrap
+  tokens, the Add-Server workflow, and Hermes integration.
+- **Verification**: `shellcheck` and `bash -n` clean; unregister success,
+  unregister failure (continue / abort), configuration removal, and
+  configuration preservation were exercised in an `ubuntu:24.04` container.

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/opspilot/opspilot/internal/agent"
-	"github.com/opspilot/opspilot/internal/agent/tools/system"
+	"github.com/tsee9iii/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/system"
 )
 
 func TestRegistryRegisterFindList(t *testing.T) {

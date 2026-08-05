@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	domainagent "github.com/opspilot/opspilot/internal/domain/agent"
+	domainagent "github.com/tsee9iii/opspilot/internal/domain/agent"
 )
 
 type RegisterAgentRequest struct {
@@ -24,6 +24,13 @@ type RegisterAgentResponse struct {
 	Status  string
 }
 
+// Agent lifecycle status values.
+const (
+	StatusOnline       = "online"
+	StatusOffline      = "offline"
+	StatusUnregistered = "unregistered"
+)
+
 // Repository defines the persistence contract required by the agent
 // application layer. Its concrete implementation lives in the infrastructure
 // layer and is injected at composition root.
@@ -37,6 +44,12 @@ type Repository interface {
 
 	// UpdateLastHeartbeat records the agent's latest heartbeat.
 	UpdateLastHeartbeat(ctx context.Context, id uuid.UUID) error
+
+	// UnregisterAgent transitions an agent to the unregistered lifecycle
+	// state and removes its capabilities and project metadata in a single
+	// unit of work. Historical command data is preserved. The operation is
+	// idempotent for an already-unregistered agent.
+	UnregisterAgent(ctx context.Context, id uuid.UUID) error
 }
 
 type RegisterUseCase struct {

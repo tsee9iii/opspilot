@@ -11,6 +11,7 @@ func NewRouter(agents *AgentHandler, commands *CommandHandler, capabilities *Cap
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("POST /api/v1/agents/register", agents.Register)
 	mux.HandleFunc("POST /api/v1/agents/heartbeat", agents.Heartbeat)
+	mux.HandleFunc("POST /api/v1/agents/unregister", agents.Unregister)
 	mux.HandleFunc("POST /api/v1/commands", commands.Create)
 	mux.HandleFunc("POST /api/v1/commands/lease", commands.Lease)
 	mux.HandleFunc("POST /api/v1/commands/start", commands.Start)

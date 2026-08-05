@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/opspilot/opspilot/gen/postgresql"
-	appagent "github.com/opspilot/opspilot/internal/application/agent"
-	domainagent "github.com/opspilot/opspilot/internal/domain/agent"
+	"github.com/tsee9iii/opspilot/gen/postgresql"
+	appagent "github.com/tsee9iii/opspilot/internal/application/agent"
+	domainagent "github.com/tsee9iii/opspilot/internal/domain/agent"
 )
 
 var _ appagent.Repository = (*AgentRepository)(nil)
@@ -79,6 +79,40 @@ func (r *AgentRepository) GetAgentByID(ctx context.Context, id uuid.UUID) (*doma
 func (r *AgentRepository) UpdateLastHeartbeat(ctx context.Context, id uuid.UUID) error {
 	if err := r.q.UpdateAgentLastHeartbeat(ctx, id); err != nil {
 		return fmt.Errorf("postgres: update agent last heartbeat: %w", err)
+	}
+	return nil
+}
+
+// UnregisterAgent transitions an agent to unregistered and removes its
+// capabilities in a single unit of work. Re-running it on an already
+// unregistered agent is a no-op success. Command history is intentionally
+// untouched.
+func (r *AgentRepository) UnregisterAgent(ctx context.Context, id uuid.UUID) error {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres: begin transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	qtx := r.q.WithTx(tx)
+
+	row, err := qtx.MarkAgentUnregistered(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return appagent.ErrAgentNotFound
+		}
+		return fmt.Errorf("postgres: mark agent unregistered: %w", err)
+	}
+	if row.Status != appagent.StatusUnregistered {
+		return fmt.Errorf("postgres: unexpected agent status %q after unregister", row.Status)
+	}
+
+	if err := qtx.DeleteAgentCapabilities(ctx, id); err != nil {
+		return fmt.Errorf("postgres: delete agent capabilities: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("postgres: commit transaction: %w", err)
 	}
 	return nil
 }

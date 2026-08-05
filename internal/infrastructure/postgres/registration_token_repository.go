@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/opspilot/opspilot/gen/postgresql"
-	appagent "github.com/opspilot/opspilot/internal/application/agent"
-	"github.com/opspilot/opspilot/internal/domain/registrationtoken"
+	"github.com/tsee9iii/opspilot/gen/postgresql"
+	appagent "github.com/tsee9iii/opspilot/internal/application/agent"
+	"github.com/tsee9iii/opspilot/internal/domain/registrationtoken"
 )
 
 type RegistrationTokenRepository struct {

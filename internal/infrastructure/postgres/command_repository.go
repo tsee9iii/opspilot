@@ -10,8 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/opspilot/opspilot/gen/postgresql"
-	appcommand "github.com/opspilot/opspilot/internal/application/command"
+	"github.com/tsee9iii/opspilot/gen/postgresql"
+	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 )
 
 var _ appcommand.Repository = (*CommandRepository)(nil)

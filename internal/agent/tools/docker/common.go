@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent"
 )
 
 // dockerInstalled verifies the docker CLI is available on PATH.

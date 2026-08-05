@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/opspilot/opspilot/internal/agent"
-	"github.com/opspilot/opspilot/internal/agent/tools/docker"
-	"github.com/opspilot/opspilot/internal/agent/tools/git"
-	httptool "github.com/opspilot/opspilot/internal/agent/tools/http"
-	"github.com/opspilot/opspilot/internal/agent/tools/journal"
-	"github.com/opspilot/opspilot/internal/agent/tools/pm2"
-	"github.com/opspilot/opspilot/internal/agent/tools/system"
-	"github.com/opspilot/opspilot/internal/agent/tools/systemctl"
+	"github.com/tsee9iii/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/docker"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/git"
+	httptool "github.com/tsee9iii/opspilot/internal/agent/tools/http"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/journal"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/pm2"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/system"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/systemctl"
 )
 
 func TestToolMetadata(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/opspilot/opspilot/internal/domain/registrationtoken"
+	"github.com/tsee9iii/opspilot/internal/domain/registrationtoken"
 )
 
 var (

@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	appcapability "github.com/opspilot/opspilot/internal/application/capability"
-	appcommand "github.com/opspilot/opspilot/internal/application/command"
+	appcapability "github.com/tsee9iii/opspilot/internal/application/capability"
+	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 )
 
 // TestCommandConfirmation exercises the confirmation enforcement that lives in

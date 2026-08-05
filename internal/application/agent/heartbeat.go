@@ -59,6 +59,10 @@ func (uc *HeartbeatUseCase) Heartbeat(ctx context.Context, req HeartbeatRequest)
 		return HeartbeatResponse{}, ErrAgentSecretMismatch
 	}
 
+	if ag.Status == StatusUnregistered {
+		return HeartbeatResponse{}, ErrAgentUnregistered
+	}
+
 	if err := uc.agents.UpdateLastHeartbeat(ctx, id); err != nil {
 		return HeartbeatResponse{}, fmt.Errorf("agent: update last heartbeat: %w", err)
 	}

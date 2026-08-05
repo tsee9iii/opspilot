@@ -6,7 +6,7 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"github.com/opspilot/opspilot/internal/bootstrap"
+	"github.com/tsee9iii/opspilot/internal/bootstrap"
 )
 
 func main() {

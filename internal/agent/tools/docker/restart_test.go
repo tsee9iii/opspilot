@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent"
 )
 
 const restartPSLine = `{"ID":"abc123","Names":["/web"],"Image":"nginx:latest","State":"running","Status":"Up 5 minutes","Ports":"0.0.0.0:8080->80/tcp"}`

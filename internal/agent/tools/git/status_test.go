@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent"
 )
 
 // fakeGitRun dispatches on git subcommands: --version, rev-parse, and status.

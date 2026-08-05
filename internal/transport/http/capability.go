@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/http"
 
-	appagent "github.com/opspilot/opspilot/internal/application/agent"
-	"github.com/opspilot/opspilot/internal/application/capability"
+	appagent "github.com/tsee9iii/opspilot/internal/application/agent"
+	"github.com/tsee9iii/opspilot/internal/application/capability"
 )
 
 type CapabilityHandler struct {
@@ -52,7 +52,8 @@ func (h *CapabilityHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			errors.Is(err, capability.ErrCapabilitiesRequired):
 			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		case errors.Is(err, appagent.ErrAgentNotFound),
-			errors.Is(err, appagent.ErrAgentSecretMismatch):
+			errors.Is(err, appagent.ErrAgentSecretMismatch),
+			errors.Is(err, appagent.ErrAgentUnregistered):
 			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid agent credentials")
 		default:
 			writeError(w, http.StatusInternalServerError, "internal_error", "failed to sync capabilities")

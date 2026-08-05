@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	appcapability "github.com/opspilot/opspilot/internal/application/capability"
+	appcapability "github.com/tsee9iii/opspilot/internal/application/capability"
 )
 
 // TestCapabilityAvailabilityPersistence verifies available/unavailable_reason

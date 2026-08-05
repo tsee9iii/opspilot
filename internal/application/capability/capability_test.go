@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 
-	appagent "github.com/opspilot/opspilot/internal/application/agent"
-	domainagent "github.com/opspilot/opspilot/internal/domain/agent"
+	appagent "github.com/tsee9iii/opspilot/internal/application/agent"
+	domainagent "github.com/tsee9iii/opspilot/internal/domain/agent"
 )
 
 const secretHash = "$argon2id$test"
@@ -89,6 +89,26 @@ func TestSyncSecretMismatch(t *testing.T) {
 	})
 	if !errors.Is(err, appagent.ErrAgentSecretMismatch) {
 		t.Fatalf("expected ErrAgentSecretMismatch, got: %v", err)
+	}
+}
+
+func TestSyncRejectsUnregistered(t *testing.T) {
+	agentID := uuid.New()
+	agents := &fakeAgentRepo{agents: map[uuid.UUID]*domainagent.Agent{
+		agentID: {ID: agentID, Secret: secretHash, Status: appagent.StatusUnregistered},
+	}}
+	caps := &fakeCapabilityRepo{}
+	uc := NewSyncUseCase(agents, caps, &fakeHasher{})
+
+	_, err := uc.Sync(context.Background(), SyncRequest{
+		AgentID: agentID.String(), Secret: "good-secret",
+		Capabilities: []Capability{{ToolName: "system.uptime"}},
+	})
+	if !errors.Is(err, appagent.ErrAgentUnregistered) {
+		t.Fatalf("expected ErrAgentUnregistered, got: %v", err)
+	}
+	if len(caps.upserted) != 0 {
+		t.Fatalf("expected no upserts for unregistered agent, got %d", len(caps.upserted))
 	}
 }
 

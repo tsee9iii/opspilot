@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent"
 )
 
 const (

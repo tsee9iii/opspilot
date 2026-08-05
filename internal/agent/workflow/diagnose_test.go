@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/opspilot/opspilot/internal/agent/project"
+	"github.com/tsee9iii/opspilot/internal/agent/project"
 )
 
 func runDiagnose(t *testing.T, fe *fakeExecutor, p project.Project, wf Workflow) Result {

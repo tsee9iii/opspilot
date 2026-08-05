@@ -5,18 +5,20 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/opspilot/opspilot/internal/application/agent"
+	"github.com/tsee9iii/opspilot/internal/application/agent"
 )
 
 type AgentHandler struct {
-	register  *agent.RegisterUseCase
-	heartbeat *agent.HeartbeatUseCase
+	register   *agent.RegisterUseCase
+	heartbeat  *agent.HeartbeatUseCase
+	unregister *agent.UnregisterUseCase
 }
 
-func NewAgentHandler(register *agent.RegisterUseCase, heartbeat *agent.HeartbeatUseCase) *AgentHandler {
+func NewAgentHandler(register *agent.RegisterUseCase, heartbeat *agent.HeartbeatUseCase, unregister *agent.UnregisterUseCase) *AgentHandler {
 	return &AgentHandler{
-		register:  register,
-		heartbeat: heartbeat,
+		register:   register,
+		heartbeat:  heartbeat,
+		unregister: unregister,
 	}
 }
 
@@ -39,7 +41,8 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		switch {
 		case errors.Is(err, agent.ErrAgentNotFound),
-			errors.Is(err, agent.ErrAgentSecretMismatch):
+			errors.Is(err, agent.ErrAgentSecretMismatch),
+			errors.Is(err, agent.ErrAgentUnregistered):
 			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid agent credentials")
 		default:
 			writeError(w, http.StatusInternalServerError, "internal_error", "failed to process heartbeat")
@@ -54,6 +57,47 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateHeartbeat(req HeartbeatRequest) error {
+	switch {
+	case req.AgentID == "":
+		return errors.New("agent_id is required")
+	case req.Secret == "":
+		return errors.New("secret is required")
+	}
+	return nil
+}
+
+func (h *AgentHandler) Unregister(w http.ResponseWriter, r *http.Request) {
+	var reqDTO UnregisterAgentRequest
+	if err := json.NewDecoder(r.Body).Decode(&reqDTO); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
+
+	if err := validateUnregisterAgent(reqDTO); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
+	resp, err := h.unregister.Unregister(r.Context(), agent.UnregisterRequest{
+		AgentID: reqDTO.AgentID,
+		Secret:  reqDTO.Secret,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, agent.ErrAgentSecretMismatch):
+			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid agent credentials")
+		case errors.Is(err, agent.ErrAgentNotFound):
+			writeError(w, http.StatusNotFound, "agent_not_found", "agent not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "failed to unregister agent")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, UnregisterAgentResponse{Status: resp.Status})
+}
+
+func validateUnregisterAgent(req UnregisterAgentRequest) error {
 	switch {
 	case req.AgentID == "":
 		return errors.New("agent_id is required")

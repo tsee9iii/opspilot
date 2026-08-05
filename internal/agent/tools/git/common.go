@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent"
 )
 
 // GitChange is a single entry in a porcelain v1 status listing. The index and

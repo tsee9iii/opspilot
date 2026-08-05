@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/opspilot/opspilot/internal/agent/project"
+	"github.com/tsee9iii/opspilot/internal/agent/project"
 )
 
 // fakeExecutor stands in for the agent's RegistryExecutor. It records every
