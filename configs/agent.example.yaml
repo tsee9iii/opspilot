@@ -7,3 +7,9 @@ server:
   environment: ""
 agent_id: ""
 poll_interval: 5
+execution_policy:
+  enabled: true
+  timeout: 30s
+  allowed_commands: []
+  denied_commands: []
+  working_directory: ""

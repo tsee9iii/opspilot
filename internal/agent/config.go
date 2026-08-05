@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -12,13 +13,22 @@ import (
 type Config struct {
 	path string `yaml:"-"`
 
-	CentralURL        string     `yaml:"central_url"`
-	RegistrationToken string     `yaml:"registration_token"`
-	Secret            string     `yaml:"secret"`
-	Version           string     `yaml:"version"`
-	Server            ServerInfo `yaml:"server"`
-	AgentID           string     `yaml:"agent_id"`
-	PollInterval      int        `yaml:"poll_interval"`
+	CentralURL        string                `yaml:"central_url"`
+	RegistrationToken string                `yaml:"registration_token"`
+	Secret            string                `yaml:"secret"`
+	Version           string                `yaml:"version"`
+	Server            ServerInfo            `yaml:"server"`
+	AgentID           string                `yaml:"agent_id"`
+	PollInterval      int                   `yaml:"poll_interval"`
+	ExecutionPolicy   ExecutionPolicyConfig `yaml:"execution_policy"`
+}
+
+type ExecutionPolicyConfig struct {
+	Enabled          *bool    `yaml:"enabled"`
+	Timeout          string   `yaml:"timeout"`
+	AllowedCommands  []string `yaml:"allowed_commands"`
+	DeniedCommands   []string `yaml:"denied_commands"`
+	WorkingDirectory string   `yaml:"working_directory"`
 }
 
 type ServerInfo struct {
@@ -69,4 +79,26 @@ func (c *Config) ValidateRegistration() error {
 		return errors.New("agent config: server.environment is required")
 	}
 	return nil
+}
+
+// Policy resolves the execution policy from config. When the policy section is
+// absent, it defaults to an enabled, unrestricted policy.
+func (c *Config) Policy() ExecutionPolicy {
+	enabled := true
+	if c.ExecutionPolicy.Enabled != nil {
+		enabled = *c.ExecutionPolicy.Enabled
+	}
+
+	timeout, err := time.ParseDuration(c.ExecutionPolicy.Timeout)
+	if err != nil {
+		timeout = 0
+	}
+
+	return ExecutionPolicy{
+		Enabled:          enabled,
+		Timeout:          timeout,
+		AllowedCommands:  c.ExecutionPolicy.AllowedCommands,
+		DeniedCommands:   c.ExecutionPolicy.DeniedCommands,
+		WorkingDirectory: c.ExecutionPolicy.WorkingDirectory,
+	}
 }
