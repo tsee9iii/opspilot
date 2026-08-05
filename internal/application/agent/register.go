@@ -5,6 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
+
+	domainagent "github.com/opspilot/opspilot/internal/domain/agent"
 )
 
 type RegisterAgentRequest struct {
@@ -20,13 +24,19 @@ type RegisterAgentResponse struct {
 	Status  string
 }
 
-// Repository defines the persistence contract required by the Register use
-// case. Its concrete implementation lives in the infrastructure layer and is
-// injected at composition root.
+// Repository defines the persistence contract required by the agent
+// application layer. Its concrete implementation lives in the infrastructure
+// layer and is injected at composition root.
 type Repository interface {
 	// RegisterAgent persists a registered agent and its server as a single
 	// unit of work. The implementation owns all persistence details.
 	RegisterAgent(ctx context.Context, req RegisterAgentRequest) (RegisterAgentResponse, error)
+
+	// GetAgentByID returns an agent including its stored secret hash.
+	GetAgentByID(ctx context.Context, id uuid.UUID) (*domainagent.Agent, error)
+
+	// UpdateLastHeartbeat records the agent's latest heartbeat.
+	UpdateLastHeartbeat(ctx context.Context, id uuid.UUID) error
 }
 
 type RegisterUseCase struct {

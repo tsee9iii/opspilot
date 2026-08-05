@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/opspilot/opspilot/internal/application/agent"
+	appcommand "github.com/opspilot/opspilot/internal/application/command"
 	"github.com/opspilot/opspilot/internal/infrastructure/postgres"
 	"github.com/opspilot/opspilot/internal/infrastructure/security"
 	httpx "github.com/opspilot/opspilot/internal/transport/http"
@@ -103,11 +104,19 @@ func (a *App) Run(ctx context.Context) error {
 func (a *App) buildHandler() http.Handler {
 	agentRepo := postgres.NewAgentRepository(a.pool)
 	tokenRepo := postgres.NewRegistrationTokenRepository(a.pool)
+	secretHasher := security.NewArgon2idHasher()
 	registerUC := agent.NewRegisterUseCase(
 		agentRepo,
 		tokenRepo,
 		security.NewHMACHasher(a.cfg.Auth.ServerSecret),
-		security.NewArgon2idHasher(),
+		secretHasher,
 	)
-	return httpx.NewRouter(httpx.NewAgentHandler(registerUC))
+	heartbeatUC := agent.NewHeartbeatUseCase(agentRepo, secretHasher)
+	commandRepo := postgres.NewCommandRepository(a.pool)
+	createCommandUC := appcommand.NewCreateUseCase(commandRepo)
+	leaseCommandUC := appcommand.NewLeaseUseCase(commandRepo)
+	return httpx.NewRouter(
+		httpx.NewAgentHandler(registerUC, heartbeatUC),
+		httpx.NewCommandHandler(createCommandUC, leaseCommandUC),
+	)
 }

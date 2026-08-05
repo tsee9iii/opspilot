@@ -12,3 +12,7 @@ bin/
 # Coverage
 *.out
 coverage.out
+
+configs/agent.yaml
+
+.env*

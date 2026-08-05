@@ -45,18 +45,73 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 func (a *Agent) heartbeat(ctx context.Context) error {
-	ticker := time.NewTicker(heartbeatInterval)
-	defer ticker.Stop()
+	interval := heartbeatInterval
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			a.log.Info("agent stopped")
 			return nil
-		case <-ticker.C:
-			a.log.Info("agent heartbeat", zap.String("agent_id", a.cfg.AgentID))
+		case <-timer.C:
+			next, err := a.sendHeartbeat(ctx)
+			if err != nil {
+				a.log.Warn("heartbeat failed", zap.Error(err))
+				interval = heartbeatInterval
+			} else {
+				a.log.Info("heartbeat sent", zap.Duration("next", next))
+				interval = next
+			}
+			timer.Reset(interval)
 		}
 	}
+}
+
+func (a *Agent) sendHeartbeat(ctx context.Context) (time.Duration, error) {
+	body, err := json.Marshal(heartbeatRequest{
+		AgentID: a.cfg.AgentID,
+		Secret:  a.cfg.Secret,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("agent: marshal heartbeat: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.CentralURL+"/api/v1/agents/heartbeat", bytes.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("agent: build heartbeat request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("agent: heartbeat request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("agent: heartbeat failed: %s", readErrorMessage(resp))
+	}
+
+	var result heartbeatResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("agent: decode heartbeat response: %w", err)
+	}
+	if result.NextHeartbeat <= 0 {
+		result.NextHeartbeat = int(heartbeatInterval.Seconds())
+	}
+
+	return time.Duration(result.NextHeartbeat) * time.Second, nil
+}
+
+type heartbeatRequest struct {
+	AgentID string `json:"agent_id"`
+	Secret  string `json:"secret"`
+}
+
+type heartbeatResponse struct {
+	Status        string `json:"status"`
+	NextHeartbeat int    `json:"next_heartbeat"`
 }
 
 func (a *Agent) register(ctx context.Context) error {

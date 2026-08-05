@@ -9,11 +9,58 @@ import (
 )
 
 type AgentHandler struct {
-	register *agent.RegisterUseCase
+	register  *agent.RegisterUseCase
+	heartbeat *agent.HeartbeatUseCase
 }
 
-func NewAgentHandler(register *agent.RegisterUseCase) *AgentHandler {
-	return &AgentHandler{register: register}
+func NewAgentHandler(register *agent.RegisterUseCase, heartbeat *agent.HeartbeatUseCase) *AgentHandler {
+	return &AgentHandler{
+		register:  register,
+		heartbeat: heartbeat,
+	}
+}
+
+func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
+	var reqDTO HeartbeatRequest
+	if err := json.NewDecoder(r.Body).Decode(&reqDTO); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
+
+	if err := validateHeartbeat(reqDTO); err != nil {
+		writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		return
+	}
+
+	resp, err := h.heartbeat.Heartbeat(r.Context(), agent.HeartbeatRequest{
+		AgentID: reqDTO.AgentID,
+		Secret:  reqDTO.Secret,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, agent.ErrAgentNotFound),
+			errors.Is(err, agent.ErrAgentSecretMismatch):
+			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid agent credentials")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "failed to process heartbeat")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, HeartbeatResponse{
+		Status:        "ok",
+		NextHeartbeat: int(resp.NextHeartbeat.Seconds()),
+	})
+}
+
+func validateHeartbeat(req HeartbeatRequest) error {
+	switch {
+	case req.AgentID == "":
+		return errors.New("agent_id is required")
+	case req.Secret == "":
+		return errors.New("secret is required")
+	}
+	return nil
 }
 
 func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {

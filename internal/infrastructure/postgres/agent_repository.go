@@ -2,11 +2,15 @@ package postgres
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	appagent "github.com/opspilot/opspilot/internal/application/agent"
+	domainagent "github.com/opspilot/opspilot/internal/domain/agent"
 	"github.com/opspilot/opspilot/gen/postgresql"
 )
 
@@ -59,4 +63,35 @@ func (r *AgentRepository) RegisterAgent(ctx context.Context, req appagent.Regist
 		AgentID: row.ID.String(),
 		Status:  row.Status,
 	}, nil
+}
+
+func (r *AgentRepository) GetAgentByID(ctx context.Context, id uuid.UUID) (*domainagent.Agent, error) {
+	row, err := r.q.GetAgentByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, appagent.ErrAgentNotFound
+		}
+		return nil, fmt.Errorf("postgres: get agent: %w", err)
+	}
+	return mapAgent(row), nil
+}
+
+func (r *AgentRepository) UpdateLastHeartbeat(ctx context.Context, id uuid.UUID) error {
+	if err := r.q.UpdateAgentLastHeartbeat(ctx, id); err != nil {
+		return fmt.Errorf("postgres: update agent last heartbeat: %w", err)
+	}
+	return nil
+}
+
+func mapAgent(row postgresql.Agents) *domainagent.Agent {
+	return &domainagent.Agent{
+		ID:            row.ID,
+		ServerID:      row.ServerID,
+		Secret:        row.Secret,
+		Version:       row.Version,
+		Status:        row.Status,
+		LastHeartbeat: pgtypeTimePtr(row.LastHeartbeat),
+		CreatedAt:     row.CreatedAt,
+		UpdatedAt:     row.UpdatedAt,
+	}
 }
