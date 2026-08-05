@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/tsee9iii/opspilot/internal/application/command"
 )
@@ -13,10 +14,50 @@ type CommandHandler struct {
 	lease     *command.LeaseUseCase
 	execution *command.ExecutionUseCase
 	approval  *command.ApprovalUseCase
+	get       *command.GetCommandUseCase
 }
 
-func NewCommandHandler(create *command.CreateUseCase, lease *command.LeaseUseCase, execution *command.ExecutionUseCase, approval *command.ApprovalUseCase) *CommandHandler {
-	return &CommandHandler{create: create, lease: lease, execution: execution, approval: approval}
+func NewCommandHandler(create *command.CreateUseCase, lease *command.LeaseUseCase, execution *command.ExecutionUseCase, approval *command.ApprovalUseCase, get *command.GetCommandUseCase) *CommandHandler {
+	return &CommandHandler{create: create, lease: lease, execution: execution, approval: approval, get: get}
+}
+
+func (h *CommandHandler) Get(w http.ResponseWriter, r *http.Request) {
+	commandID := r.PathValue("id")
+
+	resp, err := h.get.Get(r.Context(), command.GetCommandRequest{CommandID: commandID})
+	if err != nil {
+		switch {
+		case errors.Is(err, command.ErrInvalidCommandID):
+			writeError(w, http.StatusBadRequest, "invalid_command_id", err.Error())
+		case errors.Is(err, command.ErrCommandNotFound):
+			writeError(w, http.StatusNotFound, "command_not_found", "command not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "failed to get command")
+		}
+		return
+	}
+
+	writeJSON(w, http.StatusOK, CommandResultResponse{
+		ID:                 resp.ID.String(),
+		AgentID:            resp.AgentID.String(),
+		Status:             resp.Status,
+		ConfirmationStatus: resp.ConfirmationStatus,
+		Tool:               resp.Tool,
+		Parameters:         json.RawMessage(resp.Parameters),
+		Result:             json.RawMessage(resp.Result),
+		Error:              resp.Error,
+		CreatedAt:          resp.CreatedAt.Format(time.RFC3339),
+		LeasedAt:           formatTimePtr(resp.LeasedAt),
+		CompletedAt:        formatTimePtr(resp.CompletedAt),
+	})
+}
+
+func formatTimePtr(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	v := t.Format(time.RFC3339)
+	return &v
 }
 
 func (h *CommandHandler) Create(w http.ResponseWriter, r *http.Request) {

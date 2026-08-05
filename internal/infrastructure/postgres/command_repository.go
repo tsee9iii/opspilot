@@ -176,6 +176,37 @@ func (r *CommandRepository) ApproveCommand(ctx context.Context, req appcommand.A
 	}, nil
 }
 
+// GetCommand returns a command's full current state and result. The result
+// payload is passed through exactly as stored (opaque JSON, no transformation).
+func (r *CommandRepository) GetCommand(ctx context.Context, req appcommand.GetCommandRequest) (appcommand.GetCommandResponse, error) {
+	id, err := uuid.Parse(req.CommandID)
+	if err != nil {
+		return appcommand.GetCommandResponse{}, fmt.Errorf("postgres: parse command id: %w", err)
+	}
+
+	row, err := r.q.GetCommandResult(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return appcommand.GetCommandResponse{}, appcommand.ErrCommandNotFound
+	}
+	if err != nil {
+		return appcommand.GetCommandResponse{}, fmt.Errorf("postgres: get command: %w", err)
+	}
+
+	return appcommand.GetCommandResponse{
+		ID:                 row.ID,
+		AgentID:            row.AgentID,
+		Status:             row.Status,
+		ConfirmationStatus: row.ConfirmationStatus,
+		Tool:               row.ToolName,
+		Parameters:         row.Payload,
+		Result:             row.Result,
+		Error:              row.Error.String,
+		CreatedAt:          row.CreatedAt,
+		LeasedAt:           pgtypeTimePtr(row.LeasedAt),
+		CompletedAt:        pgtypeTimePtr(row.CompletedAt),
+	}, nil
+}
+
 // assertTransition verifies the command exists, is owned by the agent, and is
 // in the expected state before a transition. The state is re-checked atomically
 // by the UPDATE WHERE clause, so a concurrent transition surfaces as a no-op

@@ -58,7 +58,7 @@ Architectural decisions are documented in:
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
-| Command results query API                        | —                               | —                        | Not Implemented |
+| Command results query API                        | `GET /api/v1/commands/{id}`     | —                       | Implemented     |
 | Token rotation, metrics                          | —                               | —                        | Not Implemented |
 
 ## 2. HTTP API
@@ -77,6 +77,7 @@ All JSON. Errors use `{"error":{"code","message"}}`.
 | POST   | `/api/v1/commands/complete` | —               | `200 {command_id,status}`                | same as `start`                                                              |
 | POST   | `/api/v1/commands/fail`     | —               | `200 {command_id,status}`                | same as `start`                                                              |
 | POST   | `/api/v1/commands/approve`  | —               | `200 {status}`                           | 400 `validation_error`, 404 `command_not_found`, 500                          |
+| GET    | `/api/v1/commands/{id}`    | —               | `200 {command}`, see below               | 400 `invalid_command_id`, 404 `command_not_found`, 500                        |
 | POST   | `/api/v1/capabilities`      | agent_id+secret | `200 {status,count}`                     | 400, 401 `invalid_credentials`, 500                                          |
 
 Request bodies:
@@ -89,6 +90,28 @@ Request bodies:
 - `start`/`complete`/`fail`: `agent_id`, `command_id` (+ `result` for complete, `error` for fail)
 - `approve`: `command_id`
 - `capabilities`: `agent_id`, `secret`, `capabilities[{tool_name,version,description,parameter_schema,confirmation_level,available,unavailable_reason}]`
+
+`GET /api/v1/commands/{id}` response body:
+
+```json
+{
+  "id": "…uuid",
+  "agent_id": "…uuid",
+  "status": "pending|leased|running|completed|failed",
+  "confirmation_status": "pending|approved",
+  "tool": "system.uptime",
+  "parameters": { "interval": 5 },
+  "result": { "uptime_seconds": 42 },
+  "error": "…",            // omitted when empty
+  "created_at": "…RFC3339",
+  "leased_at": "…RFC3339", // omitted until leased
+  "completed_at": "…RFC3339" // omitted until completed
+}
+```
+
+`parameters` and `result` are opaque JSON returned exactly as stored; the
+result is never recalculated or deserialized. `result` is omitted until the
+command completes.
 
 ## 3. Database schema
 
@@ -742,3 +765,31 @@ docs/                   architecture, implementation, roadmap, adr/
 - **Verification**: `shellcheck` and `bash -n` clean; unregister success,
   unregister failure (continue / abort), configuration removal, and
   configuration preservation were exercised in an `ubuntu:24.04` container.
+
+## 19. Command result retrieval (Phase 1)
+
+- **Purpose**: expose a read-only endpoint for the command result/execution
+  history without touching the agent or the execution pipeline.
+- **Endpoint**: `GET /api/v1/commands/{id}`
+  (`internal/transport/http/command.go` + `command_result_response.go`).
+- **Use case** (`internal/application/command/get.go`): `GetCommandUseCase`
+  validates the id (invalid id → `ErrInvalidCommandID`) and delegates to
+  `Repository.GetCommand`; a missing command surfaces as
+  `ErrCommandNotFound`.
+- **Repository** (`internal/infrastructure/postgres/command_repository.go`):
+  `GetCommand` runs the sqlc query `GetCommandResult` (returns the full row:
+  id, agent_id, tool_name, payload, status, result, error, confirmation_status,
+  leased_at, started_at, completed_at, confirmed_at, created_at, updated_at)
+  and maps `pgx.ErrNoRows` → `ErrCommandNotFound`. No write path is touched
+  and no new migration is required.
+- **Result semantics**: `parameters` and `result` are `json.RawMessage` values
+  passed through exactly as stored — the result is never recalculated or
+  deserialized into tool-specific structures (workflow results are unchanged).
+- **Response**: `200` returns the command state; `result` is omitted until the
+  command completes, `error` until it fails, and `leased_at` / `completed_at`
+  until set. Errors: `400 invalid_command_id`, `404 command_not_found`.
+- **Verification**: use-case tests (pending / completed / failed passthrough,
+  unknown, invalid id), postgres integration test (`GetCommand` lifecycle,
+  opaque JSON, not found), and a transport test pinning the response contract
+  (omitempty optional fields, raw JSON passthrough) — all green, plus
+  `gofmt`, `go vet`, `go test ./...`, and `GOOS=linux go build ./...`.

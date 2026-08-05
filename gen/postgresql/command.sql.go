@@ -7,8 +7,10 @@ package postgresql
 
 import (
 	"context"
+	"time"
 
 	uuid "github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createCommand = `-- name: CreateCommand :one
@@ -46,5 +48,56 @@ func (q *Queries) CreateCommand(ctx context.Context, arg CreateCommandParams) (C
 	)
 	var i CreateCommandRow
 	err := row.Scan(&i.ID, &i.Status)
+	return i, err
+}
+
+const getCommandResult = `-- name: GetCommandResult :one
+SELECT id, agent_id, tool_name, payload, status, result, error,
+       confirmation_status, leased_at, lease_owner, started_at, completed_at,
+       confirmed_at, created_at, updated_at
+FROM commands
+WHERE id = $1
+`
+
+type GetCommandResultRow struct {
+	ID                 uuid.UUID
+	AgentID            uuid.UUID
+	ToolName           string
+	Payload            []byte
+	Status             string
+	Result             []byte
+	Error              pgtype.Text
+	ConfirmationStatus string
+	LeasedAt           pgtype.Timestamptz
+	LeaseOwner         pgtype.Text
+	StartedAt          pgtype.Timestamptz
+	CompletedAt        pgtype.Timestamptz
+	ConfirmedAt        pgtype.Timestamptz
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+// Fetch a command's full current state and result. The result payload is
+// returned exactly as stored (opaque JSON); it is never transformed.
+func (q *Queries) GetCommandResult(ctx context.Context, id uuid.UUID) (GetCommandResultRow, error) {
+	row := q.db.QueryRow(ctx, getCommandResult, id)
+	var i GetCommandResultRow
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.ToolName,
+		&i.Payload,
+		&i.Status,
+		&i.Result,
+		&i.Error,
+		&i.ConfirmationStatus,
+		&i.LeasedAt,
+		&i.LeaseOwner,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.ConfirmedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }

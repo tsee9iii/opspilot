@@ -10,6 +10,8 @@ type fakeRepo struct {
 	created       []CreateCommandRequest
 	approveResult ApproveCommandResponse
 	approveErr    error
+	getResult     GetCommandResponse
+	getErr        error
 }
 
 func (r *fakeRepo) CreateCommand(_ context.Context, req CreateCommandRequest) (CreateCommandResponse, error) {
@@ -35,6 +37,10 @@ func (r *fakeRepo) FailCommand(_ context.Context, _ FailCommandRequest) (FailCom
 
 func (r *fakeRepo) ApproveCommand(_ context.Context, _ ApproveCommandRequest) (ApproveCommandResponse, error) {
 	return r.approveResult, r.approveErr
+}
+
+func (r *fakeRepo) GetCommand(_ context.Context, _ GetCommandRequest) (GetCommandResponse, error) {
+	return r.getResult, r.getErr
 }
 
 type fakeResolver struct {

@@ -120,10 +120,11 @@ func (a *App) buildHandler() http.Handler {
 	leaseCommandUC := appcommand.NewLeaseUseCase(commandRepo)
 	executionCommandUC := appcommand.NewExecutionUseCase(commandRepo)
 	approvalCommandUC := appcommand.NewApprovalUseCase(commandRepo)
+	getCommandUC := appcommand.NewGetCommandUseCase(commandRepo)
 	capabilityUC := appcapability.NewSyncUseCase(agentRepo, capabilityRepo, secretHasher)
 	return httpx.NewRouter(
 		httpx.NewAgentHandler(registerUC, heartbeatUC, unregisterUC),
-		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC, approvalCommandUC),
+		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC, approvalCommandUC, getCommandUC),
 		httpx.NewCapabilityHandler(capabilityUC),
 	)
 }

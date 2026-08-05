@@ -13,6 +13,7 @@ func NewRouter(agents *AgentHandler, commands *CommandHandler, capabilities *Cap
 	mux.HandleFunc("POST /api/v1/agents/heartbeat", agents.Heartbeat)
 	mux.HandleFunc("POST /api/v1/agents/unregister", agents.Unregister)
 	mux.HandleFunc("POST /api/v1/commands", commands.Create)
+	mux.HandleFunc("GET /api/v1/commands/{id}", commands.Get)
 	mux.HandleFunc("POST /api/v1/commands/lease", commands.Lease)
 	mux.HandleFunc("POST /api/v1/commands/start", commands.Start)
 	mux.HandleFunc("POST /api/v1/commands/complete", commands.Complete)

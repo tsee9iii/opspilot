@@ -42,6 +42,7 @@ type Repository interface {
 	CompleteCommand(ctx context.Context, req CompleteCommandRequest) (CompleteCommandResponse, error)
 	FailCommand(ctx context.Context, req FailCommandRequest) (FailCommandResponse, error)
 	ApproveCommand(ctx context.Context, req ApproveCommandRequest) (ApproveCommandResponse, error)
+	GetCommand(ctx context.Context, req GetCommandRequest) (GetCommandResponse, error)
 }
 
 type CreateUseCase struct {
