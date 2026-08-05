@@ -18,6 +18,7 @@ type Config struct {
 	Version           string     `yaml:"version"`
 	Server            ServerInfo `yaml:"server"`
 	AgentID           string     `yaml:"agent_id"`
+	PollInterval      int        `yaml:"poll_interval"`
 }
 
 type ServerInfo struct {

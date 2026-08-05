@@ -17,16 +17,18 @@ const (
 )
 
 type Agent struct {
-	cfg  *Config
-	log  *zap.Logger
-	http *http.Client
+	cfg      *Config
+	log      *zap.Logger
+	http     *http.Client
+	executor Executor
 }
 
-func New(cfg *Config, log *zap.Logger) *Agent {
+func New(cfg *Config, log *zap.Logger, executor Executor) *Agent {
 	return &Agent{
-		cfg:  cfg,
-		log:  log,
-		http: &http.Client{Timeout: registerTimeout},
+		cfg:      cfg,
+		log:      log,
+		http:     &http.Client{Timeout: registerTimeout},
+		executor: executor,
 	}
 }
 
@@ -41,7 +43,11 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 
 	a.log.Info("agent heartbeat loop started", zap.Duration("interval", heartbeatInterval))
-	return a.heartbeat(ctx)
+	go a.heartbeat(ctx)
+
+	interval := a.pollInterval()
+	a.log.Info("agent command loop started", zap.Duration("interval", interval))
+	return a.pollCommands(ctx, interval)
 }
 
 func (a *Agent) heartbeat(ctx context.Context) error {
@@ -52,7 +58,6 @@ func (a *Agent) heartbeat(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			a.log.Info("agent stopped")
 			return nil
 		case <-timer.C:
 			next, err := a.sendHeartbeat(ctx)

@@ -6,3 +6,4 @@ server:
   hostname: ""
   environment: ""
 agent_id: ""
+poll_interval: 5

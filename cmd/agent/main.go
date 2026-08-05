@@ -40,7 +40,7 @@ func main() {
 		log.Fatalf("agent: %v", err)
 	}
 
-	a := agent.New(agentCfg, zl)
+	a := agent.New(agentCfg, zl, agent.NewStubExecutor())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
