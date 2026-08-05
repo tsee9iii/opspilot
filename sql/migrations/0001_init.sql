@@ -10,7 +10,8 @@ CREATE TABLE servers (
     environment TEXT NOT NULL,
     status      TEXT NOT NULL DEFAULT 'unknown',
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT servers_hostname_environment_key UNIQUE (hostname, environment)
 );
 
 CREATE TABLE agents (
