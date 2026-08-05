@@ -110,6 +110,7 @@ Restart=always
 RestartSec=5
 User=opspilot
 Group=opspilot
+WorkingDirectory=/etc/opspilot
 
 [Install]
 WantedBy=multi-user.target
