@@ -11,11 +11,10 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	appagent "github.com/opspilot/opspilot/internal/application/agent"
 	"github.com/opspilot/opspilot/gen/postgresql"
 	"github.com/opspilot/opspilot/internal/domain/registrationtoken"
 )
-
-var ErrRegistrationTokenNotFound = errors.New("registration token not found")
 
 type RegistrationTokenRepository struct {
 	q *postgresql.Queries
@@ -41,7 +40,7 @@ func (r *RegistrationTokenRepository) FindByHash(ctx context.Context, tokenHash 
 	row, err := r.q.GetRegistrationTokenByHash(ctx, tokenHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrRegistrationTokenNotFound
+			return nil, appagent.ErrTokenNotFound
 		}
 		return nil, fmt.Errorf("postgres: get registration token: %w", err)
 	}

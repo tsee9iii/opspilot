@@ -29,13 +29,23 @@ func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.register.Register(r.Context(), agent.RegisterAgentRequest{
-		Secret:      reqDTO.Secret,
-		Version:     reqDTO.Version,
-		Hostname:    reqDTO.Server.Hostname,
-		Environment: reqDTO.Server.Environment,
+		RegistrationToken: reqDTO.RegistrationToken,
+		Secret:            reqDTO.Secret,
+		Version:           reqDTO.Version,
+		Hostname:          reqDTO.Server.Hostname,
+		Environment:       reqDTO.Server.Environment,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to register agent")
+		switch {
+		case errors.Is(err, agent.ErrTokenNotFound),
+			errors.Is(err, agent.ErrTokenExpired),
+			errors.Is(err, agent.ErrTokenRevoked):
+			writeError(w, http.StatusUnauthorized, "invalid_token", err.Error())
+		case errors.Is(err, agent.ErrTokenUsed):
+			writeError(w, http.StatusConflict, "token_already_used", err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "failed to register agent")
+		}
 		return
 	}
 
@@ -47,6 +57,8 @@ func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 func validateRegisterAgent(req RegisterAgentRequest) error {
 	switch {
+	case req.RegistrationToken == "":
+		return errors.New("registration_token is required")
 	case req.Secret == "":
 		return errors.New("secret is required")
 	case req.Version == "":

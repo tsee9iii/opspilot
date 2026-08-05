@@ -1,0 +1,8 @@
+central_url: http://localhost:8080
+registration_token: ""
+secret: ""
+version: "0.1.0"
+server:
+  hostname: ""
+  environment: ""
+agent_id: ""

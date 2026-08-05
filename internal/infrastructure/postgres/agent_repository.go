@@ -41,8 +41,7 @@ func (r *AgentRepository) RegisterAgent(ctx context.Context, req appagent.Regist
 		return appagent.RegisterAgentResponse{}, fmt.Errorf("postgres: upsert server: %w", err)
 	}
 
-	// TODO: the secret must be hashed in the Application layer before it is
-	// persisted. Hashing is not implemented yet.
+	// The caller provides the already-hashed secret.
 	row, err := qtx.CreateAgent(ctx, postgresql.CreateAgentParams{
 		ServerID: serverID,
 		Secret:   req.Secret,

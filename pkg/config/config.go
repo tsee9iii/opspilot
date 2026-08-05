@@ -43,6 +43,8 @@ func Load() (*Config, error) {
 
 	cfg.Logger.Level = getEnv("OPSPILOT_LOG_LEVEL", "info")
 
+	cfg.Auth.ServerSecret = getEnv("OPSPILOT_AUTH_SERVER_SECRET", "dev-only-secret-change-me")
+
 	return cfg, nil
 }
 

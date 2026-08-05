@@ -2,13 +2,17 @@ package agent
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"time"
 )
 
 type RegisterAgentRequest struct {
-	Secret      string
-	Version     string
-	Hostname    string
-	Environment string
+	RegistrationToken string
+	Secret            string
+	Version           string
+	Hostname          string
+	Environment       string
 }
 
 type RegisterAgentResponse struct {
@@ -26,13 +30,53 @@ type Repository interface {
 }
 
 type RegisterUseCase struct {
-	repo Repository
+	agents  Repository
+	tokens  TokenRepository
+	tokenH  TokenHasher
+	secretH SecretHasher
 }
 
-func NewRegisterUseCase(repo Repository) *RegisterUseCase {
-	return &RegisterUseCase{repo: repo}
+func NewRegisterUseCase(agents Repository, tokens TokenRepository, tokenH TokenHasher, secretH SecretHasher) *RegisterUseCase {
+	return &RegisterUseCase{
+		agents:  agents,
+		tokens:  tokens,
+		tokenH:  tokenH,
+		secretH: secretH,
+	}
 }
 
 func (uc *RegisterUseCase) Register(ctx context.Context, req RegisterAgentRequest) (RegisterAgentResponse, error) {
-	return uc.repo.RegisterAgent(ctx, req)
+	tokenHash := uc.tokenH.Hash(req.RegistrationToken)
+
+	token, err := uc.tokens.FindByHash(ctx, tokenHash)
+	if err != nil {
+		if errors.Is(err, ErrTokenNotFound) {
+			return RegisterAgentResponse{}, ErrTokenNotFound
+		}
+		return RegisterAgentResponse{}, fmt.Errorf("agent: validate registration token: %w", err)
+	}
+
+	if token.ExpiresAt.Before(time.Now()) {
+		return RegisterAgentResponse{}, ErrTokenExpired
+	}
+	if token.RevokedAt != nil {
+		return RegisterAgentResponse{}, ErrTokenRevoked
+	}
+
+	consumed, err := uc.tokens.Consume(ctx, tokenHash)
+	if err != nil {
+		return RegisterAgentResponse{}, fmt.Errorf("agent: consume registration token: %w", err)
+	}
+	if !consumed {
+		return RegisterAgentResponse{}, ErrTokenUsed
+	}
+
+	secretHash, err := uc.secretH.Hash(ctx, req.Secret)
+	if err != nil {
+		return RegisterAgentResponse{}, fmt.Errorf("agent: hash agent secret: %w", err)
+	}
+
+	hashed := req
+	hashed.Secret = secretHash
+	return uc.agents.RegisterAgent(ctx, hashed)
 }

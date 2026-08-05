@@ -20,6 +20,7 @@ import (
 
 	"github.com/opspilot/opspilot/internal/application/agent"
 	"github.com/opspilot/opspilot/internal/infrastructure/postgres"
+	"github.com/opspilot/opspilot/internal/infrastructure/security"
 	httpx "github.com/opspilot/opspilot/internal/transport/http"
 	"github.com/opspilot/opspilot/pkg/config"
 	"github.com/opspilot/opspilot/pkg/logger"
@@ -101,7 +102,12 @@ func (a *App) Run(ctx context.Context) error {
 
 func (a *App) buildHandler() http.Handler {
 	agentRepo := postgres.NewAgentRepository(a.pool)
-	registerUC := agent.NewRegisterUseCase(agentRepo)
-	agentHandler := httpx.NewAgentHandler(registerUC)
-	return httpx.NewRouter(agentHandler)
+	tokenRepo := postgres.NewRegistrationTokenRepository(a.pool)
+	registerUC := agent.NewRegisterUseCase(
+		agentRepo,
+		tokenRepo,
+		security.NewHMACHasher(a.cfg.Auth.ServerSecret),
+		security.NewArgon2idHasher(),
+	)
+	return httpx.NewRouter(httpx.NewAgentHandler(registerUC))
 }
