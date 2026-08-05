@@ -34,6 +34,15 @@ type Commands struct {
 	UpdatedAt time.Time
 }
 
+type RegistrationTokens struct {
+	ID          uuid.UUID
+	TokenHash   string
+	Environment pgtype.Text
+	ExpiresAt   time.Time
+	RevokedAt   pgtype.Timestamptz
+	CreatedAt   time.Time
+}
+
 type Servers struct {
 	ID          uuid.UUID
 	Name        string

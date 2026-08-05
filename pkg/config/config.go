@@ -22,6 +22,9 @@ type Config struct {
 	Logger struct {
 		Level string
 	}
+	Auth struct {
+		ServerSecret string
+	}
 }
 
 func Load() (*Config, error) {
