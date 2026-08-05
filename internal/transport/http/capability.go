@@ -35,11 +35,13 @@ func (h *CapabilityHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, c := range reqDTO.Capabilities {
 		req.Capabilities = append(req.Capabilities, capability.Capability{
-			ToolName:        c.ToolName,
-			Version:         c.Version,
-			Description:     c.Description,
-			ParameterSchema: c.ParameterSchema,
-			Confirmation:    c.Confirmation,
+			ToolName:          c.ToolName,
+			Version:           c.Version,
+			Description:       c.Description,
+			ParameterSchema:   c.ParameterSchema,
+			Confirmation:      c.Confirmation,
+			Available:         c.Available,
+			UnavailableReason: c.UnavailableReason,
 		})
 	}
 

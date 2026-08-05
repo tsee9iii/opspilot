@@ -72,6 +72,10 @@ func (t *PM2ListTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *PM2ListTool) Availability(ctx context.Context) (bool, string) {
+	return agent.BinaryAvailable(ctx, t.run, "pm2")
+}
+
 func (t *PM2ListTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	out, err := t.run(ctx, "pm2", "jlist")
 	if err != nil {

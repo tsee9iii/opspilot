@@ -17,11 +17,13 @@ var (
 )
 
 type Capability struct {
-	ToolName        string
-	Version         string
-	Description     string
-	ParameterSchema []byte
-	Confirmation    string
+	ToolName          string
+	Version           string
+	Description       string
+	ParameterSchema   []byte
+	Confirmation      string
+	Available         bool
+	UnavailableReason string
 }
 
 type SyncRequest struct {

@@ -83,6 +83,10 @@ func (t *ProcessesTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *ProcessesTool) Availability(_ context.Context) (bool, string) {
+	return platformSupported()
+}
+
 func (t *ProcessesTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	first, err := t.sample(t.procPath)
 	if err != nil {

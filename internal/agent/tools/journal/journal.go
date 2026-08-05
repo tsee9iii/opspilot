@@ -80,6 +80,10 @@ func (t *JournalLogsTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *JournalLogsTool) Availability(ctx context.Context) (bool, string) {
+	return agent.BinaryAvailable(ctx, t.run, "journalctl")
+}
+
 func (t *JournalLogsTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
 	service, lines, err := parseJournalLogsRequest(payload)
 	if err != nil {

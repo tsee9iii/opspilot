@@ -24,12 +24,14 @@ func NewCapabilityRepository(pool *pgxpool.Pool) *CapabilityRepository {
 
 func (r *CapabilityRepository) Upsert(ctx context.Context, agentID uuid.UUID, cap appcapability.Capability) error {
 	return r.q.UpsertCapability(ctx, postgresql.UpsertCapabilityParams{
-		AgentID:         agentID,
-		ToolName:        cap.ToolName,
-		Version:         cap.Version,
-		Description:     cap.Description,
-		ParameterSchema: cap.ParameterSchema,
-		Confirmation:    cap.Confirmation,
+		AgentID:           agentID,
+		ToolName:          cap.ToolName,
+		Version:           cap.Version,
+		Description:       cap.Description,
+		ParameterSchema:   cap.ParameterSchema,
+		Confirmation:      cap.Confirmation,
+		Available:         cap.Available,
+		UnavailableReason: cap.UnavailableReason,
 	})
 }
 

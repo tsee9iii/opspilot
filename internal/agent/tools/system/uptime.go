@@ -39,6 +39,10 @@ func (t *UptimeTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *UptimeTool) Availability(_ context.Context) (bool, string) {
+	return platformSupported()
+}
+
 func (t *UptimeTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	return agent.RunCommand(ctx, "/usr/bin/uptime")
 }

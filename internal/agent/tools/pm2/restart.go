@@ -52,6 +52,10 @@ func (t *PM2RestartTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationRequired
 }
 
+func (t *PM2RestartTool) Availability(ctx context.Context) (bool, string) {
+	return agent.BinaryAvailable(ctx, t.run, "pm2")
+}
+
 func (t *PM2RestartTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
 	process, err := parsePM2RestartRequest(payload)
 	if err != nil {

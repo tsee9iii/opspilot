@@ -28,6 +28,7 @@ Architectural decisions are documented in:
 | Confirmation policy (none / required)            | persisted per capability        | metadata on each tool    | Implemented     |
 | Confirmation enforcement                          | `commands.confirmation_status`  | —                        | Implemented     |
 | Payload schema validation                        | —                               | `gojsonschema` in executor | Implemented     |
+| Capability availability                          | `capabilities.available`, `capabilities.unavailable_reason` | per-tool `Availability` check, synced at startup | Implemented |
 | Tool Registry | — | `Register`/`Find`/`List` | Implemented |
 | `system.uptime` tool | — | `/usr/bin/uptime` | Implemented |
 | `system.memory` tool | — | `/proc/meminfo` | Implemented |
@@ -74,11 +75,11 @@ Request bodies:
 - `lease`: `agent_id`
 - `start`/`complete`/`fail`: `agent_id`, `command_id` (+ `result` for complete, `error` for fail)
 - `approve`: `command_id`
-- `capabilities`: `agent_id`, `secret`, `capabilities[{tool_name,version,description,parameter_schema,confirmation_level}]`
+- `capabilities`: `agent_id`, `secret`, `capabilities[{tool_name,version,description,parameter_schema,confirmation_level,available,unavailable_reason}]`
 
 ## 3. Database schema
 
-Migrations (`sql/migrations/0001..0007`):
+Migrations (`sql/migrations/0001..0009`):
 
 - `0001_init.sql` — `servers`, `agents`, `commands`
 - `0002_agent_auth.sql` — `registration_tokens`
@@ -89,6 +90,8 @@ Migrations (`sql/migrations/0001..0007`):
 - `0007_capability_confirmation.sql` — adds `capabilities.confirmation_level`
 - `0008_command_confirmation.sql` — adds `commands.confirmation_status` (default
   `approved`) and `commands.confirmed_at`
+- `0009_capability_availability.sql` — adds `capabilities.available` (default
+  `true`) and `capabilities.unavailable_reason` (default `''`)
 
 Tables:
 
@@ -109,7 +112,9 @@ Tables:
   on consumption; no `used_at` column.
 - **capabilities** — `id`, `agent_id` FK, `tool_name`, `version`,
   `description`, `parameter_schema` JSONB (JSON Schema document),
-  `confirmation_level` TEXT (`none` | `required`), `created_at`,
+  `confirmation_level` TEXT (`none` | `required`), `available` BOOLEAN
+  (default `true`), `unavailable_reason` TEXT (default `''`; non-empty only
+  when `available = false`), `created_at`,
   `updated_at`; `UNIQUE (agent_id, tool_name)`.
 
 Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
@@ -136,14 +141,17 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 ## 5. Tool Registry
 
 - `internal/agent/registry.go` — `Tool` interface (`Name`, `Version`,
-  `Description`, `ParameterSchema`, `ConfirmationLevel`, `Execute(ctx, payload)`)
+  `Description`, `ParameterSchema`, `ConfirmationLevel`,
+  `Availability(ctx) (bool, string)`, `Execute(ctx, payload)`)
   and a concurrency-safe `Registry` with `Register`, `Find`, `List` (sorted
   names). `ParameterSchema` returns the tool's accepted payload as a JSON
   Schema document; tools that take no payload return
   `{"type":"object","properties":{}}`. `ConfirmationLevel` returns the tool's
   confirmation metadata: `agent.ConfirmationNone` (`"none"`) for read-only
-  tools and `agent.ConfirmationRequired` (`"required"`) for write tools. There
-  is no execution-behavior change — confirmation is metadata only.
+  tools and `agent.ConfirmationRequired` (`"required"`) for write tools.
+  `Availability` reports whether the tool can run in the current environment
+  (see §14); there is no execution-behavior change — availability is metadata
+  only.
 - `internal/agent/registry_executor.go` — the agent's `Executor`. It never
   switches on tool names: `Find → policy gate → validate payload → Execute`. An
   unregistered name returns `tool not implemented`.
@@ -257,23 +265,32 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     against its parameter schema (`service` required). Missing `systemctl`, an
     unknown service, a non-zero `systemctl restart` exit, or an execution
     failure all surface as errors.
+- Availability per tool (`Availability(ctx)`): the `system.*` tools report
+  `unsupported platform` on non-Linux hosts and are available on Linux; the
+  `pm2.*`/`docker.*`/`systemctl.*` tools and `journal.logs` report
+  `<binary> is not installed` / `<binary> is not runnable` based on a
+  `--version` check (see §14).
 - `internal/agent/tool.go` — shared helpers used by the tool packages:
   `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
-  `{"type":"object","properties":{}}` schema constant), and `RunCommand`
-  (context-aware `exec.CommandContext` wrapper); context expiry surfaces as a
-  `tool timed out` error.
+  `{"type":"object","properties":{}}` schema constant), `RunCommand`
+  (context-aware `exec.CommandContext` wrapper; context expiry surfaces as a
+  `tool timed out` error), and `BinaryAvailable` (runs `<binary> --version`;
+  returns `binary is not installed` on `exec.ErrNotFound` and
+  `binary is not runnable` on any other failure).
 
 ## 6. Capability registration
 
 - Agent startup calls `registry.List()` and sends each tool's `name`, `version`,
-  `description`, `parameter_schema`, and `confirmation_level` to
+  `description`, `parameter_schema`, `confirmation_level`, `available`, and
+  `unavailable_reason` to
   `POST /api/v1/capabilities` (one request, batch body).
 - Central (`internal/application/capability`) authenticates the agent (by id +
   secret) then upserts each capability (`ON CONFLICT (agent_id, tool_name) DO
   UPDATE`), returning the number persisted. The parameter schema is stored in
-  `capabilities.parameter_schema` (JSONB) and the confirmation level in
+  `capabilities.parameter_schema` (JSONB), the confirmation level in
   `capabilities.confirmation_level` (TEXT, validated to be `none` or
-  `required`).
+  `required`), and the runtime availability in `capabilities.available` /
+  `capabilities.unavailable_reason`.
 
 ## 7. Execution policy
 
@@ -328,7 +345,7 @@ internal/
   transport/http/       router, handlers, DTOs
 pkg/config/             env-based config
 pkg/logger/             zap logger
-sql/migrations/         0001..0007
+sql/migrations/         0001..0009
 sql/queries/            annotated SQL for sqlc
 deployments/            docker-compose (PostgreSQL 16)
 docs/                   architecture, implementation, roadmap, adr/
@@ -379,6 +396,30 @@ docs/                   architecture, implementation, roadmap, adr/
   `POST /api/v1/commands/approve`): `ApprovalUseCase` validates the command id,
   then the repository atomically updates
   `confirmation_status = 'approved', confirmed_at = now()` where the command
-  is still `pending`. Approving an already-approved command is an idempotent
+  is   still `pending`. Approving an already-approved command is an idempotent
   success; a missing command returns `404 command_not_found`. Approval is
   independent of the command's lifecycle status.
+
+## 14. Capability availability
+
+- Every tool implements `Availability(ctx) (available bool, reason string)`.
+  Contract: `available = true` implies `reason = ""`; `available = false`
+  requires a non-empty reason.
+- `agent.BinaryAvailable(ctx, run, binary)` (in `internal/agent/tool.go`) is the
+  shared check for CLI-backed tools: it runs `<binary> --version`. A missing
+  binary (`exec.ErrNotFound`) yields `<binary> is not installed`; any other
+  failure (non-zero exit, spawn error) yields `<binary> is not runnable`; exit
+  code 0 yields available.
+- Per-tool mapping: `system.*` use `platformSupported()`
+  (`internal/agent/tools/system/availability.go`) — available on Linux,
+  `unsupported platform` elsewhere; `pm2.*`, `docker.*`, `systemctl.*`, and
+  `journal.logs` check `pm2`, `docker`, `systemctl`, and `journalctl`
+  respectively.
+- The checks are intentionally cheap (a single `--version` probe); they run
+  once per capability sync and never during execution, so the command
+  lifecycle and tool execution are unaffected.
+- At sync time (`registerCapabilities`, `internal/agent/capability.go`) the
+  agent calls each tool's `Availability` and includes the result in the
+  capability payload; central persists it (see §6). Unavailable tools remain
+  registered and leaseable — availability is advisory metadata for the
+  planner, not an execution gate.

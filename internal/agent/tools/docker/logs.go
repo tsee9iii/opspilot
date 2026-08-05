@@ -80,6 +80,10 @@ func (t *DockerLogsTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *DockerLogsTool) Availability(ctx context.Context) (bool, string) {
+	return agent.BinaryAvailable(ctx, t.run, "docker")
+}
+
 func (t *DockerLogsTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
 	container, lines, err := parseDockerLogsRequest(payload)
 	if err != nil {

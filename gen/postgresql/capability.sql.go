@@ -33,33 +33,40 @@ func (q *Queries) GetCapabilityByAgentTool(ctx context.Context, arg GetCapabilit
 }
 
 const upsertCapability = `-- name: UpsertCapability :exec
-INSERT INTO capabilities (agent_id, tool_name, version, description, parameter_schema, confirmation_level)
+INSERT INTO capabilities (agent_id, tool_name, version, description, parameter_schema, confirmation_level, available, unavailable_reason)
 VALUES (
     $1,
     $2,
     $3,
     $4,
     $5,
-    $6
+    $6,
+    $7,
+    $8
 )
 ON CONFLICT (agent_id, tool_name)
 DO UPDATE SET version = EXCLUDED.version,
               description = EXCLUDED.description,
               parameter_schema = EXCLUDED.parameter_schema,
               confirmation_level = EXCLUDED.confirmation_level,
+              available = EXCLUDED.available,
+              unavailable_reason = EXCLUDED.unavailable_reason,
               updated_at = now()
 `
 
 type UpsertCapabilityParams struct {
-	AgentID         uuid.UUID
-	ToolName        string
-	Version         string
-	Description     string
-	ParameterSchema []byte
-	Confirmation    string
+	AgentID           uuid.UUID
+	ToolName          string
+	Version           string
+	Description       string
+	ParameterSchema   []byte
+	Confirmation      string
+	Available         bool
+	UnavailableReason string
 }
 
-// Register or refresh one tool capability for an agent.
+// Register or refresh one tool capability for an agent, including whether the
+// tool is currently available on the agent.
 func (q *Queries) UpsertCapability(ctx context.Context, arg UpsertCapabilityParams) error {
 	_, err := q.db.Exec(ctx, upsertCapability,
 		arg.AgentID,
@@ -68,6 +75,8 @@ func (q *Queries) UpsertCapability(ctx context.Context, arg UpsertCapabilityPara
 		arg.Description,
 		arg.ParameterSchema,
 		arg.Confirmation,
+		arg.Available,
+		arg.UnavailableReason,
 	)
 	return err
 }

@@ -35,6 +35,8 @@ func (t *validationTool) ParameterSchema() string { return t.schema }
 
 func (t *validationTool) ConfirmationLevel() agent.ConfirmationLevel { return agent.ConfirmationNone }
 
+func (t *validationTool) Availability(_ context.Context) (bool, string) { return true, "" }
+
 func (t *validationTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
 	t.executed = true
 	return []byte(`{"ok":true}`), nil

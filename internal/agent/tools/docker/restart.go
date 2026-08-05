@@ -64,6 +64,10 @@ func (t *DockerRestartTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationRequired
 }
 
+func (t *DockerRestartTool) Availability(ctx context.Context) (bool, string) {
+	return agent.BinaryAvailable(ctx, t.run, "docker")
+}
+
 func (t *DockerRestartTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
 	container, err := parseDockerRestartRequest(payload)
 	if err != nil {

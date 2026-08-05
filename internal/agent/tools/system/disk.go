@@ -61,6 +61,10 @@ func (t *DiskTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *DiskTool) Availability(_ context.Context) (bool, string) {
+	return platformSupported()
+}
+
 func (t *DiskTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
 	stat, err := t.statfs(t.rootPath)
 	if err != nil {

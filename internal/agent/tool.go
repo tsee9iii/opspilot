@@ -20,6 +20,27 @@ type CommandResult struct {
 // payload fields.
 const EmptyParameterSchema = `{"type":"object","properties":{}}`
 
+// BinaryAvailable verifies a binary a tool depends on is installed and
+// responds to `binary --version`. It returns false with a reason otherwise.
+// The check is cheap and only exercises the binary the tool itself needs.
+func BinaryAvailable(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), binary string) (bool, string) {
+	out, err := run(ctx, binary, "--version")
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return false, binary + " is not installed"
+		}
+		return false, binary + " is not runnable"
+	}
+	var res CommandResult
+	if err := json.Unmarshal(out, &res); err != nil {
+		return false, binary + " is not runnable"
+	}
+	if res.ExitCode != 0 {
+		return false, binary + " is not runnable"
+	}
+	return true, ""
+}
+
 // RunCommand runs a single binary and returns stdout, stderr and the exit
 // code as JSON. Context expiry (e.g. a policy timeout) surfaces as a
 // "tool timed out" error.

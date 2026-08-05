@@ -69,6 +69,10 @@ func (t *DockerPsTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *DockerPsTool) Availability(ctx context.Context) (bool, string) {
+	return agent.BinaryAvailable(ctx, t.run, "docker")
+}
+
 func (t *DockerPsTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	containers, err := psContainers(ctx, t.run, "docker.ps")
 	if err != nil {

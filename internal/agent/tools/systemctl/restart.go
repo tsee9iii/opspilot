@@ -64,6 +64,10 @@ func (t *SystemCtlRestartTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationRequired
 }
 
+func (t *SystemCtlRestartTool) Availability(ctx context.Context) (bool, string) {
+	return agent.BinaryAvailable(ctx, t.run, "systemctl")
+}
+
 func (t *SystemCtlRestartTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
 	service, err := parseSystemCtlRestartRequest(payload)
 	if err != nil {

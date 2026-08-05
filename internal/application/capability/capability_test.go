@@ -126,3 +126,26 @@ func TestSyncSuccess(t *testing.T) {
 		t.Fatalf("unexpected second confirmation: %s", caps.upserted[1].Confirmation)
 	}
 }
+
+func TestSyncPersistsAvailability(t *testing.T) {
+	agentID, uc, caps := newFixture()
+	resp, err := uc.Sync(context.Background(), SyncRequest{
+		AgentID: agentID.String(), Secret: "good-secret",
+		Capabilities: []Capability{
+			{ToolName: "docker.ps", Version: "1.0.0", Description: "ps", ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "none", Available: true},
+			{ToolName: "pm2.list", Version: "1.0.0", Description: "list", ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "none", Available: false, UnavailableReason: "pm2 is not installed"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Count != 2 {
+		t.Fatalf("unexpected count: %d", resp.Count)
+	}
+	if !caps.upserted[0].Available || caps.upserted[0].UnavailableReason != "" {
+		t.Fatalf("expected docker.ps available, got %+v", caps.upserted[0])
+	}
+	if caps.upserted[1].Available || caps.upserted[1].UnavailableReason != "pm2 is not installed" {
+		t.Fatalf("expected pm2.list unavailable with reason, got %+v", caps.upserted[1])
+	}
+}

@@ -59,6 +59,10 @@ func (t *MemoryTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *MemoryTool) Availability(_ context.Context) (bool, string) {
+	return platformSupported()
+}
+
 func (t *MemoryTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
 	f, err := os.Open(t.memInfoPath)
 	if err != nil {

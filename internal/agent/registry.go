@@ -21,12 +21,15 @@ const (
 // Tool executes a named operation against a payload and returns a result.
 // ParameterSchema returns the tool's accepted payload as a JSON Schema
 // document; ConfirmationLevel is the tool's confirmation metadata.
+// Availability reports whether the tool can actually run on this host
+// (available=true with reason="") and, when unavailable, why.
 type Tool interface {
 	Name() string
 	Version() string
 	Description() string
 	ParameterSchema() string
 	ConfirmationLevel() ConfirmationLevel
+	Availability(ctx context.Context) (available bool, reason string)
 	Execute(ctx context.Context, payload []byte) ([]byte, error)
 }
 

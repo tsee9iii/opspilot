@@ -74,6 +74,10 @@ func (t *SystemCtlStatusTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *SystemCtlStatusTool) Availability(ctx context.Context) (bool, string) {
+	return agent.BinaryAvailable(ctx, t.run, "systemctl")
+}
+
 func (t *SystemCtlStatusTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
 	service, err := parseSystemCtlStatusRequest(payload)
 	if err != nil {

@@ -83,6 +83,10 @@ func (t *CPUTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *CPUTool) Availability(_ context.Context) (bool, string) {
+	return platformSupported()
+}
+
 func (t *CPUTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	first, err := t.readStat(t.statPath)
 	if err != nil {

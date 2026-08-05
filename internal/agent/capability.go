@@ -8,11 +8,13 @@ import (
 )
 
 type capabilityInfo struct {
-	ToolName        string            `json:"tool_name"`
-	Version         string            `json:"version"`
-	Description     string            `json:"description"`
-	ParameterSchema json.RawMessage   `json:"parameter_schema"`
-	Confirmation    ConfirmationLevel `json:"confirmation_level"`
+	ToolName          string            `json:"tool_name"`
+	Version           string            `json:"version"`
+	Description       string            `json:"description"`
+	ParameterSchema   json.RawMessage   `json:"parameter_schema"`
+	Confirmation      ConfirmationLevel `json:"confirmation_level"`
+	Available         bool              `json:"available"`
+	UnavailableReason string            `json:"unavailable_reason"`
 }
 
 type syncCapabilitiesRequest struct {
@@ -31,12 +33,15 @@ func (a *Agent) registerCapabilities(ctx context.Context) error {
 	}
 	for _, name := range names {
 		tool, _ := a.registry.Find(name)
+		available, reason := tool.Availability(ctx)
 		req.Capabilities = append(req.Capabilities, capabilityInfo{
-			ToolName:        tool.Name(),
-			Version:         tool.Version(),
-			Description:     tool.Description(),
-			ParameterSchema: json.RawMessage(tool.ParameterSchema()),
-			Confirmation:    tool.ConfirmationLevel(),
+			ToolName:          tool.Name(),
+			Version:           tool.Version(),
+			Description:       tool.Description(),
+			ParameterSchema:   json.RawMessage(tool.ParameterSchema()),
+			Confirmation:      tool.ConfirmationLevel(),
+			Available:         available,
+			UnavailableReason: reason,
 		})
 	}
 

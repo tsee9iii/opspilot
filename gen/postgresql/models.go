@@ -32,6 +32,8 @@ type Capabilities struct {
 	UpdatedAt         time.Time
 	ParameterSchema   []byte
 	ConfirmationLevel string
+	Available         bool
+	UnavailableReason string
 }
 
 type Commands struct {

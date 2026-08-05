@@ -53,6 +53,8 @@ func (t *fakeTool) ParameterSchema() string { return agent.EmptyParameterSchema 
 
 func (t *fakeTool) ConfirmationLevel() agent.ConfirmationLevel { return agent.ConfirmationNone }
 
+func (t *fakeTool) Availability(_ context.Context) (bool, string) { return true, "" }
+
 func (t *fakeTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
 	return []byte(`{"ok":true}`), nil
 }

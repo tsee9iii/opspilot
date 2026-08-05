@@ -1,6 +1,7 @@
 package agent_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -71,6 +72,34 @@ func TestConfirmationLevels(t *testing.T) {
 	for _, tool := range writeTools {
 		if tool.ConfirmationLevel() != agent.ConfirmationRequired {
 			t.Fatalf("tool %s should require confirmation, got: %s", tool.Name(), tool.ConfirmationLevel())
+		}
+	}
+}
+
+func TestToolAvailabilityContract(t *testing.T) {
+	tools := []agent.Tool{
+		system.NewUptimeTool(),
+		system.NewMemoryTool(),
+		system.NewCPUTool(),
+		system.NewDiskTool(),
+		system.NewProcessesTool(),
+		pm2.NewPM2ListTool(),
+		pm2.NewPM2LogsTool(),
+		pm2.NewPM2RestartTool(),
+		docker.NewDockerPsTool(),
+		docker.NewDockerLogsTool(),
+		docker.NewDockerRestartTool(),
+		systemctl.NewSystemCtlStatusTool(),
+		systemctl.NewSystemCtlRestartTool(),
+		journal.NewJournalLogsTool(),
+	}
+	for _, tool := range tools {
+		ok, reason := tool.Availability(context.Background())
+		if ok && reason != "" {
+			t.Fatalf("tool %s available but reason set: %q", tool.Name(), reason)
+		}
+		if !ok && reason == "" {
+			t.Fatalf("tool %s unavailable without a reason", tool.Name())
 		}
 	}
 }

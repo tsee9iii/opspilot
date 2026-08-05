@@ -29,6 +29,8 @@ func (t *spyTool) ParameterSchema() string { return t.schema }
 
 func (t *spyTool) ConfirmationLevel() ConfirmationLevel { return ConfirmationNone }
 
+func (t *spyTool) Availability(_ context.Context) (bool, string) { return true, "" }
+
 func (t *spyTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
