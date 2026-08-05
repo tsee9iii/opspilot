@@ -4,40 +4,49 @@ Reference of what is currently implemented. Unimplemented areas are stated
 explicitly as **Not Implemented**. Planned features are never documented as
 implemented.
 
+This document describes the current implementation only.
+
+Architectural decisions are documented in:
+
+- docs/architecture.md
+- docs/adr/
+  Planned features are tracked in:
+- docs/roadmap.md
+
 ## 1. Feature matrix
 
-| Feature | Central | Agent | Status |
-|---|---|---|---|
-| HTTP server with graceful shutdown | `cmd/central` | — | Implemented |
-| Agent registration (HMAC token, Argon2id secret) | `POST /api/v1/agents/register` | startup | Implemented |
-| Agent heartbeat | `POST /api/v1/agents/heartbeat` | 30s loop | Implemented |
-| Command creation | `POST /api/v1/commands` | — | Implemented |
-| Command leasing (atomic, FIFO) | `POST /api/v1/commands/lease` | poll loop | Implemented |
-| Command lifecycle transitions | `start` / `complete` / `fail` | reports them | Implemented |
-| Execution policy | — | gates tools | Implemented |
-| Tool Registry | — | `Register`/`Find`/`List` | Implemented |
-| `system.uptime` tool | — | `/usr/bin/uptime` | Implemented |
-| Capability registration | `POST /api/v1/capabilities` | startup sync | Implemented |
-| WebSocket / Telegram / AI | — | — | Not Implemented |
-| Docker / systemctl tools, sandboxing | — | — | Not Implemented |
-| Command results query API | — | — | Not Implemented |
-| Token rotation, metrics | — | — | Not Implemented |
+| Feature                                          | Central                         | Agent                    | Status          |
+| ------------------------------------------------ | ------------------------------- | ------------------------ | --------------- |
+| HTTP server with graceful shutdown               | `cmd/central`                   | —                        | Implemented     |
+| Agent registration (HMAC token, Argon2id secret) | `POST /api/v1/agents/register`  | startup                  | Implemented     |
+| Agent heartbeat                                  | `POST /api/v1/agents/heartbeat` | 30s loop                 | Implemented     |
+| Command creation                                 | `POST /api/v1/commands`         | —                        | Implemented     |
+| Command leasing (atomic, FIFO)                   | `POST /api/v1/commands/lease`   | poll loop                | Implemented     |
+| Command lifecycle transitions                    | `start` / `complete` / `fail`   | reports them             | Implemented     |
+| Execution policy                                 | —                               | gates tools              | Implemented     |
+| Tool Registry                                    | —                               | `Register`/`Find`/`List` | Implemented     |
+| `system.uptime` tool                             | —                               | `/usr/bin/uptime`        | Implemented     |
+| Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
+| WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
+| Docker / systemctl tools, sandboxing             | —                               | —                        | Not Implemented |
+| Command results query API                        | —                               | —                        | Not Implemented |
+| Token rotation, metrics                          | —                               | —                        | Not Implemented |
 
 ## 2. HTTP API
 
 All JSON. Errors use `{"error":{"code","message"}}`.
 
-| Method | Path | Auth | Success | Error codes |
-|---|---|---|---|---|
-| GET | `/healthz` | — | `200 ok` | — |
-| POST | `/api/v1/agents/register` | token | `201 {agent_id,status}` | 400 `validation_error`, 401 `invalid_token`, 409 `token_already_used`, 500 |
-| POST | `/api/v1/agents/heartbeat` | agent_id+secret | `200 {status,next_heartbeat}` | 400, 401 `invalid_credentials`, 500 |
-| POST | `/api/v1/commands` | — | `201 {command_id,status}` | 400, 500 |
-| POST | `/api/v1/commands/lease` | — | `200 {command_id,tool,payload}` or `204` | 400, 500 |
-| POST | `/api/v1/commands/start` | — | `200 {command_id,status}` | 400, 403 `command_not_owned`, 404 `not_found`, 409 `invalid_transition`, 500 |
-| POST | `/api/v1/commands/complete` | — | `200 {command_id,status}` | same as `start` |
-| POST | `/api/v1/commands/fail` | — | `200 {command_id,status}` | same as `start` |
-| POST | `/api/v1/capabilities` | agent_id+secret | `200 {status,count}` | 400, 401 `invalid_credentials`, 500 |
+| Method | Path                        | Auth            | Success                                  | Error codes                                                                  |
+| ------ | --------------------------- | --------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
+| GET    | `/healthz`                  | —               | `200 ok`                                 | —                                                                            |
+| POST   | `/api/v1/agents/register`   | token           | `201 {agent_id,status}`                  | 400 `validation_error`, 401 `invalid_token`, 409 `token_already_used`, 500   |
+| POST   | `/api/v1/agents/heartbeat`  | agent_id+secret | `200 {status,next_heartbeat}`            | 400, 401 `invalid_credentials`, 500                                          |
+| POST   | `/api/v1/commands`          | —               | `201 {command_id,status}`                | 400, 500                                                                     |
+| POST   | `/api/v1/commands/lease`    | —               | `200 {command_id,tool,payload}` or `204` | 400, 500                                                                     |
+| POST   | `/api/v1/commands/start`    | —               | `200 {command_id,status}`                | 400, 403 `command_not_owned`, 404 `not_found`, 409 `invalid_transition`, 500 |
+| POST   | `/api/v1/commands/complete` | —               | `200 {command_id,status}`                | same as `start`                                                              |
+| POST   | `/api/v1/commands/fail`     | —               | `200 {command_id,status}`                | same as `start`                                                              |
+| POST   | `/api/v1/capabilities`      | agent_id+secret | `200 {status,count}`                     | 400, 401 `invalid_credentials`, 500                                          |
 
 Request bodies:
 
@@ -116,12 +125,12 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
   and `description` to `POST /api/v1/capabilities` (one request, batch body).
 - Central (`internal/application/capability`) authenticates the agent (by id +
   secret) then upserts each capability (`ON CONFLICT (agent_id, tool_name) DO
-  UPDATE`), returning the number persisted.
+UPDATE`), returning the number persisted.
 
 ## 7. Execution policy
 
 - `internal/agent/policy.go` — `ExecutionPolicy{Enabled, Timeout,
-  AllowedCommands, DeniedCommands, WorkingDirectory}`.
+AllowedCommands, DeniedCommands, WorkingDirectory}`.
 - `Allow(name)` order: disabled → denied list (deny wins) → allow list
   (non-empty allow list requires membership).
 - Applied by `RegistryExecutor` before a tool runs; `Timeout` bounds tool
@@ -132,7 +141,7 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 ## 8. Security model
 
 - **Registration tokens**: stored only as `HMAC-SHA256(OPSPILOT_AUTH_SERVER_SECRET,
-  token)` hex, never plaintext. Registration consumes the row atomically; a
+token)` hex, never plaintext. Registration consumes the row atomically; a
   replay returns `409 token_already_used`. Expired/revoked tokens return
   `401 invalid_token`.
 - **Agent secrets**: stored as Argon2id hashes. Registration hashes the secret;
