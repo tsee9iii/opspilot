@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/opspilot/opspilot/internal/agent/tools/docker"
 	"github.com/opspilot/opspilot/internal/agent/tools/pm2"
 	"github.com/opspilot/opspilot/internal/agent/tools/system"
 )
@@ -19,6 +20,9 @@ func TestToolMetadata(t *testing.T) {
 		pm2.NewPM2ListTool(),
 		pm2.NewPM2LogsTool(),
 		pm2.NewPM2RestartTool(),
+		docker.NewDockerPsTool(),
+		docker.NewDockerLogsTool(),
+		docker.NewDockerRestartTool(),
 	}
 	for _, tool := range tools {
 		if tool.Name() == "" || tool.Version() == "" || tool.Description() == "" {
@@ -43,6 +47,8 @@ func TestConfirmationLevels(t *testing.T) {
 		system.NewProcessesTool(),
 		pm2.NewPM2ListTool(),
 		pm2.NewPM2LogsTool(),
+		docker.NewDockerPsTool(),
+		docker.NewDockerLogsTool(),
 	}
 	for _, tool := range readOnly {
 		if tool.ConfirmationLevel() != agent.ConfirmationNone {
@@ -50,8 +56,13 @@ func TestConfirmationLevels(t *testing.T) {
 		}
 	}
 
-	writeTool := pm2.NewPM2RestartTool()
-	if writeTool.ConfirmationLevel() != agent.ConfirmationRequired {
-		t.Fatalf("tool %s should require confirmation, got: %s", writeTool.Name(), writeTool.ConfirmationLevel())
+	writeTools := []agent.Tool{
+		pm2.NewPM2RestartTool(),
+		docker.NewDockerRestartTool(),
+	}
+	for _, tool := range writeTools {
+		if tool.ConfirmationLevel() != agent.ConfirmationRequired {
+			t.Fatalf("tool %s should require confirmation, got: %s", tool.Name(), tool.ConfirmationLevel())
+		}
 	}
 }

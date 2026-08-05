@@ -35,9 +35,12 @@ Architectural decisions are documented in:
 | `pm2.list` tool | — | `pm2 jlist` | Implemented |
 | `pm2.logs` tool | — | `pm2 logs --nostream --raw` | Implemented |
 | `pm2.restart` tool | — | `pm2 restart` | Implemented |
+| `docker.ps` tool | — | `docker ps --format '{{json .}}'` | Implemented |
+| `docker.logs` tool | — | `docker logs --tail <n>` | Implemented |
+| `docker.restart` tool | — | `docker restart` | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
-| Docker / systemctl tools, sandboxing             | —                               | —                        | Not Implemented |
+| Docker SDK, systemctl tools, sandboxing          | —                               | —                        | Not Implemented |
 | Command results query API                        | —                               | —                        | Not Implemented |
 | Token rotation, metrics                          | —                               | —                        | Not Implemented |
 
@@ -137,9 +140,13 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     `statfs(2)`), `processes.go`.
   - `internal/agent/tools/pm2/` — `pm2.*` tools: `list.go`, `logs.go`,
     `restart.go`.
-- Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs` —
-  advertise `confirmation_level = none`; the write tool `pm2.restart`
-  advertises `confirmation_level = required`):
+  - `internal/agent/tools/docker/` — `docker.*` tools: `ps.go`, `logs.go`,
+    `restart.go`, plus `common.go` (shared `docker --version` check,
+    `docker ps` listing, and container-existence verification).
+- Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs`,
+  `docker.ps`, `docker.logs` — advertise `confirmation_level = none`; write
+  tools `pm2.restart` and `docker.restart` advertise
+  `confirmation_level = required`):
   - `system.uptime` — runs `/usr/bin/uptime` via `exec.CommandContext`;
     returns `{"stdout","stderr","exit_code"}`.
   - `system.memory` — parses `/proc/meminfo` (Linux only) and returns
@@ -179,6 +186,26 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     `{"process","status":"restarted"}`. The payload is validated against its
     parameter schema (`process` required); missing `pm2`, an unknown process,
     or a restart failure all surface as errors.
+  - `docker.ps` — runs `docker ps --format '{{json .}}'` (requires `docker` on
+    `PATH`) and returns `{"containers":[...]}` where each container is
+    `{"id","name","image","state","status","ports"}`. Fields map from the
+    Docker CLI's `ID`, `Names` (joined), `Image`, `State`, `Status`, and
+    `Ports`. An empty output yields `{"containers":[]}`. Missing `docker`, a
+    non-zero exit, or an invalid JSON line all surface as errors.
+  - `docker.logs` — verifies `docker` is installed and that the container
+    exists (reusing `docker.ps` parsing logic), then runs
+    `docker logs --tail <lines> <container>` and returns
+    `{"container","stdout","stderr","lines"}`. The payload is validated against
+    its parameter schema: `container` is required (name or ID); `lines`
+    defaults to 100 and must be 1..1000. Missing `docker`, an unknown
+    container, or a non-zero `docker logs` exit all surface as errors.
+  - `docker.restart` — verifies `docker` is installed (`docker --version`) and
+    that the container exists (reusing `docker.ps` parsing logic), then runs
+    `docker restart <container>` and returns
+    `{"container","status":"restarted"}`. The payload is validated against its
+    parameter schema (`container` required, name or ID). Missing `docker`, an
+    unknown container, a non-zero `docker restart` exit, or an execution
+    failure all surface as errors.
 - `internal/agent/tool.go` — shared helpers used by the tool packages:
   `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
   `{"type":"object","properties":{}}` schema constant), and `RunCommand`
@@ -250,7 +277,7 @@ internal/
   transport/http/       router, handlers, DTOs
 pkg/config/             env-based config
 pkg/logger/             zap logger
-sql/migrations/         0001..0006
+sql/migrations/         0001..0007
 sql/queries/            annotated SQL for sqlc
 deployments/            docker-compose (PostgreSQL 16)
 docs/                   architecture, implementation, roadmap, adr/
@@ -278,6 +305,7 @@ docs/                   architecture, implementation, roadmap, adr/
   repository but are not exposed over HTTP)
 - Command results query / history API; capability and agent listing endpoints
 - Audit, alert, and confirmation tables/domains
-- Additional tools (Docker, systemctl); tool sandboxing; tool version matrix
+- Additional tools (systemctl, Docker SDK); tool sandboxing; tool version
+  matrix
 - Token rotation; metrics and observability beyond zap logs
 - Migration tooling (`cmd/cli`, `migrate-*` Makefile targets)

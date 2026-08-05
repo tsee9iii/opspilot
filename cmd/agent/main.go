@@ -10,6 +10,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/opspilot/opspilot/internal/agent/tools/docker"
 	"github.com/opspilot/opspilot/internal/agent/tools/pm2"
 	"github.com/opspilot/opspilot/internal/agent/tools/system"
 	"github.com/opspilot/opspilot/pkg/config"
@@ -51,6 +52,9 @@ func main() {
 	registry.Register(pm2.NewPM2ListTool())
 	registry.Register(pm2.NewPM2LogsTool())
 	registry.Register(pm2.NewPM2RestartTool())
+	registry.Register(docker.NewDockerPsTool())
+	registry.Register(docker.NewDockerLogsTool())
+	registry.Register(docker.NewDockerRestartTool())
 
 	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()), registry)
 
