@@ -11,8 +11,10 @@ import (
 
 	"github.com/opspilot/opspilot/internal/agent"
 	"github.com/opspilot/opspilot/internal/agent/tools/docker"
+	"github.com/opspilot/opspilot/internal/agent/tools/journal"
 	"github.com/opspilot/opspilot/internal/agent/tools/pm2"
 	"github.com/opspilot/opspilot/internal/agent/tools/system"
+	"github.com/opspilot/opspilot/internal/agent/tools/systemctl"
 	"github.com/opspilot/opspilot/pkg/config"
 	"github.com/opspilot/opspilot/pkg/logger"
 )
@@ -55,6 +57,9 @@ func main() {
 	registry.Register(docker.NewDockerPsTool())
 	registry.Register(docker.NewDockerLogsTool())
 	registry.Register(docker.NewDockerRestartTool())
+	registry.Register(systemctl.NewSystemCtlStatusTool())
+	registry.Register(systemctl.NewSystemCtlRestartTool())
+	registry.Register(journal.NewJournalLogsTool())
 
 	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()), registry)
 

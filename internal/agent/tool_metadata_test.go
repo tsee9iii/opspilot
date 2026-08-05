@@ -6,8 +6,10 @@ import (
 
 	"github.com/opspilot/opspilot/internal/agent"
 	"github.com/opspilot/opspilot/internal/agent/tools/docker"
+	"github.com/opspilot/opspilot/internal/agent/tools/journal"
 	"github.com/opspilot/opspilot/internal/agent/tools/pm2"
 	"github.com/opspilot/opspilot/internal/agent/tools/system"
+	"github.com/opspilot/opspilot/internal/agent/tools/systemctl"
 )
 
 func TestToolMetadata(t *testing.T) {
@@ -23,6 +25,9 @@ func TestToolMetadata(t *testing.T) {
 		docker.NewDockerPsTool(),
 		docker.NewDockerLogsTool(),
 		docker.NewDockerRestartTool(),
+		systemctl.NewSystemCtlStatusTool(),
+		systemctl.NewSystemCtlRestartTool(),
+		journal.NewJournalLogsTool(),
 	}
 	for _, tool := range tools {
 		if tool.Name() == "" || tool.Version() == "" || tool.Description() == "" {
@@ -49,6 +54,8 @@ func TestConfirmationLevels(t *testing.T) {
 		pm2.NewPM2LogsTool(),
 		docker.NewDockerPsTool(),
 		docker.NewDockerLogsTool(),
+		systemctl.NewSystemCtlStatusTool(),
+		journal.NewJournalLogsTool(),
 	}
 	for _, tool := range readOnly {
 		if tool.ConfirmationLevel() != agent.ConfirmationNone {
@@ -59,6 +66,7 @@ func TestConfirmationLevels(t *testing.T) {
 	writeTools := []agent.Tool{
 		pm2.NewPM2RestartTool(),
 		docker.NewDockerRestartTool(),
+		systemctl.NewSystemCtlRestartTool(),
 	}
 	for _, tool := range writeTools {
 		if tool.ConfirmationLevel() != agent.ConfirmationRequired {

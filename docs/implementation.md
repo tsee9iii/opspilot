@@ -38,9 +38,12 @@ Architectural decisions are documented in:
 | `docker.ps` tool | — | `docker ps --format '{{json .}}'` | Implemented |
 | `docker.logs` tool | — | `docker logs --tail <n>` | Implemented |
 | `docker.restart` tool | — | `docker restart` | Implemented |
+| `systemctl.status` tool | — | `systemctl show --property=...` | Implemented |
+| `systemctl.restart` tool | — | `systemctl restart` | Implemented |
+| `journal.logs` tool | — | `journalctl -u <svc> -n <n>` | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
-| Docker SDK, systemctl tools, sandboxing          | —                               | —                        | Not Implemented |
+| Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
 | Command results query API                        | —                               | —                        | Not Implemented |
 | Token rotation, metrics                          | —                               | —                        | Not Implemented |
 
@@ -143,10 +146,13 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
   - `internal/agent/tools/docker/` — `docker.*` tools: `ps.go`, `logs.go`,
     `restart.go`, plus `common.go` (shared `docker --version` check,
     `docker ps` listing, and container-existence verification).
+  - `internal/agent/tools/systemctl/` — `systemctl.*` tools: `status.go`,
+    `restart.go`.
+  - `internal/agent/tools/journal/` — `journal.*` tools: `journal.go`.
 - Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs`,
-  `docker.ps`, `docker.logs` — advertise `confirmation_level = none`; write
-  tools `pm2.restart` and `docker.restart` advertise
-  `confirmation_level = required`):
+  `docker.ps`, `docker.logs`, `systemctl.status`, `journal.logs` — advertise
+  `confirmation_level = none`; write tools `pm2.restart`, `docker.restart`,
+  and `systemctl.restart` advertise `confirmation_level = required`):
   - `system.uptime` — runs `/usr/bin/uptime` via `exec.CommandContext`;
     returns `{"stdout","stderr","exit_code"}`.
   - `system.memory` — parses `/proc/meminfo` (Linux only) and returns
@@ -205,6 +211,32 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     `{"container","status":"restarted"}`. The payload is validated against its
     parameter schema (`container` required, name or ID). Missing `docker`, an
     unknown container, a non-zero `docker restart` exit, or an execution
+    failure all surface as errors.
+  - `systemctl.status` — verifies `systemctl` is available
+    (`systemctl --version`), then runs
+    `systemctl show <service> --property=Id --property=Description
+    --property=LoadState --property=ActiveState --property=SubState
+    --property=UnitFileState --property=MainPID --property=ExecMainStatus
+    --no-pager` and parses the key=value output (not the human-readable
+    `systemctl status`), returning
+    `{"service","description","load_state","active_state","sub_state",
+    "unit_file_state","main_pid","exit_status"}`. The payload is validated
+    against its     parameter schema (`service` required). Missing `systemctl`, an
+    unknown service, a non-zero exit, or malformed key=value output all
+    surface as errors.
+  - `journal.logs` — verifies `journalctl` is available
+    (`journalctl --version`), then runs
+    `journalctl -u <service> -n <lines> --no-pager -o short-iso` and returns
+    `{"service","stdout","stderr","lines"}`. The payload is validated against
+    its parameter schema: `service` is required; `lines` defaults to 100 and
+    must be 1..1000. Missing `journalctl`, an unknown service (empty journal
+    output), or a non-zero `journalctl` exit all surface as errors.
+  - `systemctl.restart` — verifies `systemctl` is available
+    (`systemctl --version`), verifies the service exists (reusing the
+    `systemctl.status` parsing logic), then runs `systemctl restart <service>`
+    and returns `{"service","status":"restarted"}`. The payload is validated
+    against its parameter schema (`service` required). Missing `systemctl`, an
+    unknown service, a non-zero `systemctl restart` exit, or an execution
     failure all surface as errors.
 - `internal/agent/tool.go` — shared helpers used by the tool packages:
   `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
@@ -305,7 +337,6 @@ docs/                   architecture, implementation, roadmap, adr/
   repository but are not exposed over HTTP)
 - Command results query / history API; capability and agent listing endpoints
 - Audit, alert, and confirmation tables/domains
-- Additional tools (systemctl, Docker SDK); tool sandboxing; tool version
-  matrix
+- Additional tools (Docker SDK); tool sandboxing; tool version matrix
 - Token rotation; metrics and observability beyond zap logs
 - Migration tooling (`cmd/cli`, `migrate-*` Makefile targets)
