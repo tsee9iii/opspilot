@@ -65,6 +65,18 @@ func (r *RegistrationTokenRepository) Revoke(ctx context.Context, id uuid.UUID) 
 	return nil
 }
 
+func (r *RegistrationTokenRepository) List(ctx context.Context) ([]*registrationtoken.RegistrationToken, error) {
+	rows, err := r.q.ListRegistrationTokens(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: list registration tokens: %w", err)
+	}
+	tokens := make([]*registrationtoken.RegistrationToken, 0, len(rows))
+	for _, row := range rows {
+		tokens = append(tokens, mapRegistrationToken(row))
+	}
+	return tokens, nil
+}
+
 func mapRegistrationToken(row postgresql.RegistrationTokens) *registrationtoken.RegistrationToken {
 	return &registrationtoken.RegistrationToken{
 		ID:          row.ID,

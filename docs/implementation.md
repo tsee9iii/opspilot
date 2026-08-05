@@ -63,6 +63,7 @@ Architectural decisions are documented in:
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
 | Command results query API                        | `GET /api/v1/commands/{id}`     | —                       | Implemented     |
+| Registration token CLI                           | `opspilot-central token <create/list/revoke>` | —             | Implemented     |
 | Token rotation, metrics                          | —                               | —                        | Not Implemented |
 
 ## 2. HTTP API
@@ -475,7 +476,8 @@ and the optional `projects` section (see §15).
 ## 10. Project structure
 
 ```
-cmd/central/            central binary
+cmd/central/            central binary (HTTP server + token CLI)
+cmd/central/token/      registration token CLI subcommands
 cmd/agent/              agent binary
 gen/postgresql/         sqlc-generated query code (checked in)
 internal/
@@ -1013,3 +1015,61 @@ go build ./...`, and `GOOS=linux go vet ./...` all pass. End-to-end verified:
 Central started reading port, database, and server secret from a YAML file
 (`OPSPILOT_CONFIG`), migrated the schema, and served `/healthz` on the YAML-
 configured port.
+
+## 24. Registration token CLI (Phase 2)
+
+**Problem**: registration tokens are required for agent onboarding, but the
+only supported path was direct database access — the API has no token-create
+endpoint, so operators could not provision agents without manually inserting
+rows.
+
+**Command** — the CLI is the official operator interface. `cmd/central`
+dispatches on the first argument: `opspilot-central` starts the HTTP server
+exactly as before; `opspilot-central token ...` runs a subcommand and exits.
+There are no HTTP endpoints and no web UI for tokens.
+
+```
+opspilot-central token create [--environment <env>] [--expires <lifetime>]
+opspilot-central token list
+opspilot-central token revoke <token-id>
+```
+
+- **create** — generates a token `ops_rt_<base64url(32 random bytes)>`
+  (≥256 bits of entropy via `crypto/rand`), prints the plain token exactly
+  once under a `Registration Token` heading, and persists **only** the
+  HMAC-SHA256 hex hash (`security.HMACHasher`, the same hash the registration
+  flow looks up). Options: `--environment` (default `production`) and
+  `--expires`, an optional lifetime parsed as a Go duration (`24h`, `90s`) or
+  a whole number of days (`7d`, `30d`); the default lifetime is 30 days.
+  Invalid lifetimes are rejected before anything is written.
+- **list** — prints a table of `ID`, `Environment`, `Created At`, `Expires
+  At`, `Revoked`, `Consumed`, most recently created first. Token values are
+  never shown. `Consumed` is always `no`: consumption deletes the row, so a
+  surviving token is by definition unconsumed. Expired tokens remain listed.
+- **revoke** — sets `revoked_at = now()` on the token id; the row is kept
+  (consumed tokens are already deleted by registration, so they are
+  unaffected). Idempotent: revoking twice succeeds.
+
+**Implementation** — `cmd/central/token` is a dedicated CLI package. It reuses
+the existing `registrationtoken` domain, `RegistrationTokenRepository` (a new
+`List` method was added for the list command, backed by a new
+`ListRegistrationTokens` sqlc query against the existing table), the existing
+HMAC hasher, and the shared `pkg/config` + `postgres.New` initialization (same
+as `cmd/migrate`); no duplicate hashing, repository, or connection-pool code.
+The HTTP server startup path in `cmd/central/main.go` is untouched. A database
+that cannot be reached produces a clear `connect database:` error and exit
+code 1; config-load failures produce `load config:`.
+
+**Testing** — `cmd/central/token/token_test.go` covers create output format
+(exactly three lines: heading, blank line, token), token format (`ops_rt_`
+prefix, ≥32 bytes decoded, uniqueness), that the stored value is the HMAC of
+the plain token (and never the token itself), default environment, the
+`--environment` and `--expires` options (including `7d`/`30d`/`24h` and the
+30-day default), invalid lifetimes, list output (no token values, revoked yes/
+no, expired tokens still shown), revoke, revoke twice, invalid/missing ids,
+unknown/missing subcommands, and clear bootstrap (config) and database-failure
+errors. `internal/infrastructure/postgres/registration_token_list_integration_test.go`
+covers `List` ordering, nullable `environment`, `revoked_at`, and that revoke
+does not delete rows. `gofmt`, `go build ./...`, `go vet ./...`,
+`go test ./...`, `GOOS=linux go build ./...`, and `GOOS=linux go vet ./...`
+all pass.

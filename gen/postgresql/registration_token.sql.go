@@ -81,6 +81,40 @@ func (q *Queries) GetRegistrationTokenByHash(ctx context.Context, tokenHash stri
 	return i, err
 }
 
+const listRegistrationTokens = `-- name: ListRegistrationTokens :many
+SELECT id, token_hash, environment, expires_at, revoked_at, created_at
+FROM registration_tokens
+ORDER BY created_at DESC, id
+`
+
+// List all registration tokens, most recently created first.
+func (q *Queries) ListRegistrationTokens(ctx context.Context) ([]RegistrationTokens, error) {
+	rows, err := q.db.Query(ctx, listRegistrationTokens)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RegistrationTokens{}
+	for rows.Next() {
+		var i RegistrationTokens
+		if err := rows.Scan(
+			&i.ID,
+			&i.TokenHash,
+			&i.Environment,
+			&i.ExpiresAt,
+			&i.RevokedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeRegistrationToken = `-- name: RevokeRegistrationToken :exec
 UPDATE registration_tokens
 SET revoked_at = now()

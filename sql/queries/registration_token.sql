@@ -27,3 +27,9 @@ RETURNING id;
 UPDATE registration_tokens
 SET revoked_at = now()
 WHERE id = sqlc.arg('id');
+
+-- name: ListRegistrationTokens :many
+-- List all registration tokens, most recently created first.
+SELECT id, token_hash, environment, expires_at, revoked_at, created_at
+FROM registration_tokens
+ORDER BY created_at DESC, id;
