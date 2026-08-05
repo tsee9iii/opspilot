@@ -9,6 +9,7 @@ import "net/http"
 func NewRouter() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
+	mux.HandleFunc("POST /api/v1/agents/register", handleRegisterAgent)
 	return mux
 }
 
