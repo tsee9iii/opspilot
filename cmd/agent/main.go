@@ -11,6 +11,7 @@ import (
 
 	"github.com/opspilot/opspilot/internal/agent"
 	"github.com/opspilot/opspilot/internal/agent/tools/docker"
+	"github.com/opspilot/opspilot/internal/agent/tools/git"
 	"github.com/opspilot/opspilot/internal/agent/tools/journal"
 	"github.com/opspilot/opspilot/internal/agent/tools/pm2"
 	"github.com/opspilot/opspilot/internal/agent/tools/system"
@@ -60,6 +61,7 @@ func main() {
 	registry.Register(systemctl.NewSystemCtlStatusTool())
 	registry.Register(systemctl.NewSystemCtlRestartTool())
 	registry.Register(journal.NewJournalLogsTool())
+	registry.Register(git.NewGitStatusTool())
 
 	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()), registry)
 

@@ -44,6 +44,7 @@ Architectural decisions are documented in:
 | `systemctl.status` tool | — | `systemctl show --property=...` | Implemented |
 | `systemctl.restart` tool | — | `systemctl restart` | Implemented |
 | `journal.logs` tool | — | `journalctl -u <svc> -n <n>` | Implemented |
+| `git.status` tool | — | `git status --porcelain=v1 --branch` | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -176,6 +177,9 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
   - `internal/agent/tools/systemctl/` — `systemctl.*` tools: `status.go`,
     `restart.go`.
   - `internal/agent/tools/journal/` — `journal.*` tools: `journal.go`.
+  - `internal/agent/tools/git/` — `git.*` tools: `status.go`, plus `common.go`
+    with reusable Git helpers (`ensureGit`, `ensureRepository`, `runGit`,
+    `parseBranchHeader`, `parsePorcelainStatus`) for future Git tools.
 - Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs`,
   `docker.ps`, `docker.logs`, `systemctl.status`, `journal.logs` — advertise
   `confirmation_level = none`; write tools `pm2.restart`, `docker.restart`,
@@ -265,11 +269,24 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     against its parameter schema (`service` required). Missing `systemctl`, an
     unknown service, a non-zero `systemctl restart` exit, or an execution
     failure all surface as errors.
+  - `git.status` — verifies `git` is installed (`git --version`), verifies the
+    repository path exists and is inside a Git work tree
+    (`git -C <repository> rev-parse --is-inside-work-tree`), then runs
+    `git -C <repository> status --porcelain=v1 --branch` and returns
+    `{"repository","branch","detached","ahead","behind","dirty","changes"}`.
+    Each `changes` entry is `{"path","index_status","worktree_status"}` with
+    git's porcelain status codes preserved verbatim and file ordering intact;
+    `dirty` is `true` when there is at least one change. The payload is
+    validated against its parameter schema (`repository` required, absolute
+    path). Missing `git`, a non-existent repository, a path outside a work
+    tree, a non-zero `git status` exit, or malformed porcelain output all
+    surface as errors. No raw git output is ever returned.
 - Availability per tool (`Availability(ctx)`): the `system.*` tools report
   `unsupported platform` on non-Linux hosts and are available on Linux; the
   `pm2.*`/`docker.*`/`systemctl.*` tools and `journal.logs` report
   `<binary> is not installed` / `<binary> is not runnable` based on a
-  `--version` check (see §14).
+  `--version` check; `git.status` reports `git is not installed` /
+  `git is not runnable` based on `git --version` (see §14).
 - `internal/agent/tool.go` — shared helpers used by the tool packages:
   `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
   `{"type":"object","properties":{}}` schema constant), `RunCommand`
@@ -414,7 +431,9 @@ docs/                   architecture, implementation, roadmap, adr/
   (`internal/agent/tools/system/availability.go`) — available on Linux,
   `unsupported platform` elsewhere; `pm2.*`, `docker.*`, `systemctl.*`, and
   `journal.logs` check `pm2`, `docker`, `systemctl`, and `journalctl`
-  respectively.
+  respectively; `git.status` checks `git`. The repository path is validated at
+  execution time (`ensureRepository`), not in `Availability`, because
+  availability carries no payload.
 - The checks are intentionally cheap (a single `--version` probe); they run
   once per capability sync and never during execution, so the command
   lifecycle and tool execution are unaffected.
