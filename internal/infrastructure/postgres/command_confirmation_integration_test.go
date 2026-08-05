@@ -206,6 +206,9 @@ func resetSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatalf("read migrations: %v", err)
 	}
 	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".sql" {
+			continue
+		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			t.Fatalf("read migration %s: %v", e.Name(), err)

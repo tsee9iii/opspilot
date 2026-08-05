@@ -23,9 +23,11 @@ import (
 	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 	"github.com/tsee9iii/opspilot/internal/infrastructure/postgres"
 	"github.com/tsee9iii/opspilot/internal/infrastructure/security"
+	"github.com/tsee9iii/opspilot/internal/migration"
 	httpx "github.com/tsee9iii/opspilot/internal/transport/http"
 	"github.com/tsee9iii/opspilot/pkg/config"
 	"github.com/tsee9iii/opspilot/pkg/logger"
+	"github.com/tsee9iii/opspilot/sql/migrations"
 )
 
 type App struct {
@@ -58,6 +60,16 @@ func New(ctx context.Context) (*App, error) {
 	}
 
 	log.Info("database connectivity verified")
+
+	migrationRunner := migration.NewRunner(migrations.FS, migration.NewStorage(pool))
+	applied, err := migrationRunner.Run(ctx)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("bootstrap: run migrations: %w", err)
+	}
+	if len(applied) > 0 {
+		log.Info("database migrations applied", zap.Int("count", len(applied)))
+	}
 
 	return &App{cfg: cfg, log: log, pool: pool}, nil
 }

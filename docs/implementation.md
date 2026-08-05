@@ -57,6 +57,7 @@ Architectural decisions are documented in:
 | Agent installer (Phase 1)                        | —                               | `scripts/install.sh`     | Implemented     |
 | Central installer (Phase 1)                      | `scripts/install-central.sh`    | —                        | Implemented     |
 | GitHub release pipeline                          | `.github/workflows/release.yml` | tag push `v*`            | Implemented     |
+| Embedded migration framework                     | `internal/migration/` + `cmd/migrate` | auto-migrate on central startup | Implemented     |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -133,6 +134,10 @@ Migrations (`sql/migrations/0001..0010`):
 - `0010_agent_unregister.sql` — restricts `agents.status` to
   `online` / `offline` / `unregistered` via a CHECK constraint and backfills
   existing agents to `online`
+
+The migration runner (see §22) creates a `schema_migrations` bookkeeping table
+(`version TEXT PRIMARY KEY`, `applied_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
+when it runs; it is not part of the numbered migrations.
 
 Tables:
 
@@ -479,7 +484,7 @@ internal/
   transport/http/       router, handlers, DTOs
 pkg/config/             env-based config
 pkg/logger/             zap logger
-sql/migrations/         0001..0009
+sql/migrations/         0001..0010 (+ embed.go)
 sql/queries/            annotated SQL for sqlc
 deployments/            docker-compose (PostgreSQL 16)
 docs/                   architecture, implementation, roadmap, adr/
@@ -495,7 +500,8 @@ docs/                   architecture, implementation, roadmap, adr/
   its agent dies (no lease timeout/renewal).
 - `assertTransition` reads the command, then updates with an atomic `WHERE`;
   state is re-checked in SQL but the read is an extra round-trip.
-- Migrations are static files; there is no migration runner in the binary.
+- Migrations are embedded in the binary and run automatically at startup
+  (§22); there is no down/rollback support.
 - `docs/implementation.md` is maintained manually alongside the code.
 
 ## 12. Not Implemented
@@ -512,7 +518,7 @@ docs/                   architecture, implementation, roadmap, adr/
   wires the Project Profiles and workflow engine (§15, §16) into the registry
   and command pipeline
 - Token rotation; metrics and observability beyond zap logs
-- Migration tooling (`cmd/cli`, `migrate-*` Makefile targets)
+- Migration `down`/rollback support (`cmd/migrate` only has `up` and `status`)
 
 ## 13. Confirmation enforcement
 
@@ -891,3 +897,50 @@ docs/                   architecture, implementation, roadmap, adr/
 - **Verification**: `GOOS=linux GOARCH=amd64|arm64 go build ./cmd/agent` and
   `./cmd/central` all pass locally, producing statically linked, stripped ELF
   binaries whose names match the installer asset expectations.
+
+## 22. Embedded migration framework
+
+- **Purpose**: a built-in migration runner for Central that executes the SQL
+  files in `sql/migrations/` with no external migration tool
+  (no golang-migrate, goose, or migrate CLI).
+- **Migration source**: `sql/migrations/*.sql` remain the single source of
+  truth and are reused exactly as-is. `sql/migrations/embed.go` embeds every
+  `.sql` file into the binary via `//go:embed *.sql`
+  (`migrations.FS`); migrations are never read from disk at runtime.
+- **Tracking**: the runner creates a `schema_migrations` table automatically if
+  it does not exist (`version TEXT PRIMARY KEY`,
+  `applied_at TIMESTAMPTZ NOT NULL DEFAULT now()`).
+- **Ordering**: migrations run in lexicographical file-name order
+  (`0001_… < 0002_… < … < 0010_…`), so the numbering defines the sequence.
+- **Execution**: each migration runs inside its own transaction
+  (`internal/migration/storage.go` — `Storage.apply`). The version is recorded
+  in `schema_migrations` in the same transaction, so a failure rolls back both
+  the migration and its bookkeeping row, stops immediately, and returns an
+  error. Multi-statement files rely on pgx's simple protocol, which is
+  automatically selected when a query has no arguments.
+- **Idempotency**: already-applied versions are skipped (`Storage.AppliedVersions`
+  read at the start of `Run`), so re-running is safe.
+- **Runner** (`internal/migration/runner.go`): `Runner.Run(ctx)` applies all
+  pending migrations and returns the versions applied; `Runner.Status(ctx)`
+  returns applied and pending lists; `Runner.Migrations()` loads and sorts the
+  embedded files. `NewRunner(source fs.FS, storage *Storage)` takes any
+  `fs.FS`, which is what the tests exploit.
+- **Bootstrap**: `bootstrap.New` runs pending migrations automatically after
+  verifying database connectivity and before the HTTP server starts
+  (`internal/bootstrap/app.go`). If migrations fail, Central terminates with a
+  `bootstrap: run migrations:` error.
+- **CLI** (`cmd/migrate`, binary `opspilot-migrate`): `up` applies pending
+  migrations and prints each applied version (or `no pending migrations`);
+  `status` prints the applied and pending lists. There is no `down` command
+  and no rollback support.
+- **No external dependency**: the framework uses only `embed`, `io/fs`, and
+  pgx, all already in the module.
+- **Verification**: integration tests run against a dedicated
+  `opspilot_migration_test` database (so they never collide with the postgres
+  package tests on the shared `opspilot` DB) and cover empty database,
+  partially migrated, already up-to-date, failed-migration rollback (the failed
+  version is never recorded and its partial DDL is rolled back), `schema_migrations`
+  creation/columns, lexicographical ordering (a migration that depends on the
+  previous one succeeds only if order is respected), embedded loading (10 files,
+  sorted, non-empty), and `status`. `gofmt`, `go build`, `go vet`, `go test ./...`,
+  `GOOS=linux go build ./...`, and `GOOS=linux go vet ./...` all pass.
