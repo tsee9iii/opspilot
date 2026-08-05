@@ -55,6 +55,7 @@ Architectural decisions are documented in:
 | Deploy workflow (execution) | — | git.pull → restart → optional http.check via RegistryExecutor | Implemented |
 | Diagnose workflow (execution) | — | system.* + platform + logs + optional http.check, continue-on-failure | Implemented |
 | Agent installer (Phase 1)                        | —                               | `scripts/install.sh`     | Implemented     |
+| Central installer (Phase 1)                      | `scripts/install-central.sh`    | —                        | Implemented     |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -793,3 +794,61 @@ docs/                   architecture, implementation, roadmap, adr/
   opaque JSON, not found), and a transport test pinning the response contract
   (omitempty optional fields, raw JSON passthrough) — all green, plus
   `gofmt`, `go vet`, `go test ./...`, and `GOOS=linux go build ./...`.
+
+## 20. Central installer (Phase 1)
+
+- **Purpose**: a production installer (`scripts/install-central.sh`) that
+  downloads the latest released `opspilot-central` binary from GitHub Releases
+  and installs it as a systemd service on a Linux host.
+- **Scope**: the installer does **not** install PostgreSQL, does **not** create
+  a database, does **not** run migrations, and does **not** generate
+  registration tokens. No Go code is involved; the config template is created
+  for the operator to fill in, after which the service must be restarted.
+- **Platform detection**: Linux only; `uname -m` maps `x86_64 → amd64` and
+  `aarch64 → arm64`. Anything else fails with
+  `unsupported OS` / `unsupported architecture`.
+- **Release assets** (published on GitHub Releases per architecture):
+  `opspilot-central-linux-amd64`, `opspilot-central-linux-arm64`. The asset is
+  fetched from
+  `https://github.com/tsee9iii/opspilot/releases/latest/download/<asset>`
+  via `curl -fsSL --retry 3` — the same release strategy as the agent installer
+  (§17). A downloaded file that is empty or not a Linux ELF binary (checked via
+  the `\x7fELF` magic) aborts the install.
+- **Binary install**: installed to `/usr/local/bin/opspilot-central` with mode
+  `0755` via `install -m 0755`.
+- **Config**: `/etc/opspilot/` is created if missing; a minimal
+  `/etc/opspilot/central.yaml` template is written (mode `0600`) **only** when
+  it does not already exist — an existing, operator-edited config is never
+  overwritten. The template documents `server.host` / `server.port`
+  (`0.0.0.0` / `8080`) and the `database` connection block.
+- **System user**: the `opspilot` system user is created only when missing
+  (`useradd --system --no-create-home --user-group --shell /bin/false
+  opspilot`), guarded by `id opspilot`. The config directory and file are
+  `chown`ed to `opspilot:opspilot`.
+- **systemd service**: `/etc/systemd/system/opspilot-central.service` with
+  `After=network-online.target` + `Wants=network-online.target`,
+  `ExecStart=/usr/local/bin/opspilot-central`, `Restart=always`, `RestartSec=5`,
+  `User=opspilot`, `Group=opspilot`, `WorkingDirectory=/etc/opspilot`,
+  `WantedBy=multi-user.target`. The service is started via
+  `systemctl daemon-reload; enable; start`.
+- **Health check**: after starting, the installer polls
+  `http://127.0.0.1:8080/health` every second for up to 15 seconds. If healthy
+  it prints success; if not it prints a warning. A failed health check never
+  fails the installation.
+- **PostgreSQL verification**: the installer only checks whether `psql` is
+  available. If not, it prints
+  `PostgreSQL is not installed.` / `Central may not start until PostgreSQL is
+  configured.` It never installs PostgreSQL, creates databases, or runs
+  migrations.
+- **Idempotency**: safe to re-run — re-running does not re-create the user and
+  does not overwrite an existing config; the binary and unit file are simply
+  reinstalled and the service re-enabled.
+- **Completion output**: always prints the exact `Installation completed.` /
+  `Next steps:` block directing the operator to edit
+  `/etc/opspilot/central.yaml`, ensure PostgreSQL is available, restart, and
+  verify the service.
+- **Uninstall**: not implemented.
+- **Verification**: `shellcheck` and `bash -n` clean; the full install flow
+  (platform detection, download + ELF check, binary/user/config/service install,
+  enable + start), config preservation, health-check success and warning paths,
+  and the PostgreSQL check were exercised in an `ubuntu:24.04` container.
