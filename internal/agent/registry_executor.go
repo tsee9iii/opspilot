@@ -27,6 +27,10 @@ func (e *RegistryExecutor) Execute(ctx context.Context, toolName string, payload
 		return nil, err
 	}
 
+	if err := validatePayload([]byte(tool.ParameterSchema()), payload); err != nil {
+		return nil, fmt.Errorf("tool %s: invalid payload: %w", toolName, err)
+	}
+
 	execCtx := ctx
 	var cancel context.CancelFunc
 	if e.policy.Timeout > 0 {

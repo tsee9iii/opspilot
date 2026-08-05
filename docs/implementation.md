@@ -26,6 +26,7 @@ Architectural decisions are documented in:
 | Execution policy                                 | —                               | gates tools              | Implemented     |
 | Tool metadata (name, version, description, schema, confirmation) | `capabilities.parameter_schema`, `capabilities.confirmation_level` | advertised at startup | Implemented     |
 | Confirmation policy (none / required)            | persisted per capability        | metadata on each tool    | Implemented     |
+| Payload schema validation                        | —                               | `gojsonschema` in executor | Implemented     |
 | Tool Registry | — | `Register`/`Find`/`List` | Implemented |
 | `system.uptime` tool | — | `/usr/bin/uptime` | Implemented |
 | `system.memory` tool | — | `/proc/meminfo` | Implemented |
@@ -119,7 +120,9 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 - **Command poll loop** (main): every `poll_interval` (default 5s):
   lease one command → `start` it → execute via the executor → `complete` with
   the result or `fail` with the error. A `204` (empty queue) sleeps until the
-  next tick.
+  next tick. The executor validates the leased payload against the tool's
+  parameter schema before running it; an invalid payload fails the command via
+  the normal `fail` transition.
 - SIGINT/SIGTERM cancel the context; the loops exit cleanly.
 
 ## 5. Tool Registry
@@ -134,8 +137,16 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
   tools and `agent.ConfirmationRequired` (`"required"`) for write tools. There
   is no execution-behavior change — confirmation is metadata only.
 - `internal/agent/registry_executor.go` — the agent's `Executor`. It never
-  switches on tool names: `Find → policy gate → Execute`. An unregistered name
-  returns `tool not implemented`.
+  switches on tool names: `Find → policy gate → validate payload → Execute`. An
+  unregistered name returns `tool not implemented`.
+- `internal/agent/schema.go` — validates a command payload against the tool's
+  `ParameterSchema()` before execution using `github.com/xeipuuv/gojsonschema`.
+  Supported keywords: `type`, `required`, `properties`, `enum`, `minimum`,
+  `maximum`, `additionalProperties`. An empty payload is treated as `{}`. A
+  failed validation short-circuits `Execute` (the tool never runs) and returns
+  a stable, human-readable error (e.g. `required property "process" missing`,
+  `property "lines" must be integer`) that the command loop reports via the
+  existing `fail` transition.
 - Tools are grouped into category packages under `internal/agent/tools/` and
   registered once in `cmd/agent/main.go`:
   - `internal/agent/tools/system/` — `system.*` tools: `uptime.go`, `memory.go`,
