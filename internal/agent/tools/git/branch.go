@@ -3,8 +3,6 @@ package git
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 
 	"github.com/opspilot/opspilot/internal/agent"
 )
@@ -82,38 +80,16 @@ func (t *GitBranchTool) Execute(ctx context.Context, payload []byte) ([]byte, er
 		return nil, err
 	}
 
-	branchOut, err := runGit(ctx, t.run, "git.branch", "-C", repository, "branch", "--show-current")
+	info, err := currentBranch(ctx, t.run, "git.branch", repository)
 	if err != nil {
 		return nil, err
 	}
-	branch, err := parseBranchName(branchOut)
-	if err != nil {
-		return nil, fmt.Errorf("git.branch: %w", err)
-	}
 
-	result := gitBranchResult{
+	return json.Marshal(gitBranchResult{
 		Repository: repository,
-		Branch:     branch,
-		Detached:   branch == "",
-	}
-
-	// A non-zero exit for @{u} means no upstream is configured — that is not
-	// an error, it just leaves tracking false.
-	upstreamOut, _, exitCode, err := runGitRaw(ctx, t.run, "-C", repository, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-	if err != nil {
-		return nil, fmt.Errorf("git.branch: %w", err)
-	}
-	if exitCode == 0 {
-		upstream, err := parseBranchName(upstreamOut)
-		if err != nil {
-			return nil, fmt.Errorf("git.branch: %w", err)
-		}
-		if upstream == "" {
-			return nil, errors.New("git.branch: malformed output: empty upstream")
-		}
-		result.Tracking = true
-		result.Upstream = upstream
-	}
-
-	return json.Marshal(result)
+		Branch:     info.Branch,
+		Detached:   info.Detached,
+		Tracking:   info.Upstream != "",
+		Upstream:   info.Upstream,
+	})
 }

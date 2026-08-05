@@ -23,12 +23,14 @@ type GitChange struct {
 }
 
 // branchInfo is the parsed `## ...` header of
-// `git status --porcelain=v1 --branch` output.
+// `git status --porcelain=v1 --branch` output, or the result of the runtime
+// branch/upstream lookup shared by the git.* tools.
 type branchInfo struct {
 	Branch   string
 	Detached bool
 	Ahead    int
 	Behind   int
+	Upstream string
 }
 
 // ensureGit verifies the git CLI is available on PATH.
@@ -117,6 +119,38 @@ func parseBranchName(stdout string) (string, error) {
 	return name, nil
 }
 
+// currentBranch resolves the checked-out branch via `git branch
+// --show-current` and its upstream via `git rev-parse @{u}`. An empty branch
+// means detached HEAD; a non-zero exit from the upstream lookup means no
+// upstream is configured (Upstream stays empty).
+func currentBranch(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), tool, repository string) (branchInfo, error) {
+	branchOut, err := runGit(ctx, run, tool, "-C", repository, "branch", "--show-current")
+	if err != nil {
+		return branchInfo{}, err
+	}
+	branch, err := parseBranchName(branchOut)
+	if err != nil {
+		return branchInfo{}, fmt.Errorf("%s: %w", tool, err)
+	}
+	info := branchInfo{Branch: branch, Detached: branch == ""}
+
+	upstreamOut, _, exitCode, err := runGitRaw(ctx, run, "-C", repository, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+	if err != nil {
+		return branchInfo{}, fmt.Errorf("%s: %w", tool, err)
+	}
+	if exitCode == 0 {
+		upstream, err := parseBranchName(upstreamOut)
+		if err != nil {
+			return branchInfo{}, fmt.Errorf("%s: %w", tool, err)
+		}
+		if upstream == "" {
+			return branchInfo{}, fmt.Errorf("%s: malformed output: empty upstream", tool)
+		}
+		info.Upstream = upstream
+	}
+	return info, nil
+}
+
 // parseBranchHeader parses the first line of `git status --porcelain=v1
 // --branch` output, e.g. `## main...origin/main [ahead 2, behind 1]` or
 // `## HEAD (no branch, ahead 4)`.
@@ -145,6 +179,7 @@ func parseBranchHeader(header string) (branchInfo, error) {
 
 	if i := strings.Index(remainder, "..."); i >= 0 {
 		info.Branch = remainder[:i]
+		info.Upstream = remainder[i+3:]
 		return info, nil
 	}
 	info.Branch = remainder

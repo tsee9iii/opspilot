@@ -33,6 +33,7 @@ func TestToolMetadata(t *testing.T) {
 		git.NewGitStatusTool(),
 		git.NewGitCurrentCommitTool(),
 		git.NewGitBranchTool(),
+		git.NewGitPullTool(),
 	}
 	for _, tool := range tools {
 		if tool.Name() == "" || tool.Version() == "" || tool.Description() == "" {
@@ -75,6 +76,7 @@ func TestConfirmationLevels(t *testing.T) {
 		pm2.NewPM2RestartTool(),
 		docker.NewDockerRestartTool(),
 		systemctl.NewSystemCtlRestartTool(),
+		git.NewGitPullTool(),
 	}
 	for _, tool := range writeTools {
 		if tool.ConfirmationLevel() != agent.ConfirmationRequired {
@@ -102,6 +104,7 @@ func TestToolAvailabilityContract(t *testing.T) {
 		git.NewGitStatusTool(),
 		git.NewGitCurrentCommitTool(),
 		git.NewGitBranchTool(),
+		git.NewGitPullTool(),
 	}
 	for _, tool := range tools {
 		ok, reason := tool.Availability(context.Background())

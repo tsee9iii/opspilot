@@ -47,6 +47,7 @@ Architectural decisions are documented in:
 | `git.status` tool | — | `git status --porcelain=v1 --branch` | Implemented |
 | `git.current_commit` tool | — | `git log -1 --pretty=format:%H%n%h%n%an%n%ae%n%ad%n%s` | Implemented |
 | `git.branch` tool | — | `git branch --show-current` + `git rev-parse @{u}` | Implemented |
+| `git.pull` tool | — | `git pull --ff-only` | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -180,14 +181,15 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     `restart.go`.
   - `internal/agent/tools/journal/` — `journal.*` tools: `journal.go`.
   - `internal/agent/tools/git/` — `git.*` tools: `status.go`, `commit.go`,
-    `branch.go`, plus `common.go` with reusable Git helpers (`ensureGit`,
-    `ensureRepository`, `runGit`/`runGitRaw`, `parseRepositoryRequest`,
-    `parseBranchName`, `parseBranchHeader`, `parsePorcelainStatus`) for
-    future Git tools.
+    `branch.go`, `pull.go`, plus `common.go` with reusable Git helpers
+    (`ensureGit`, `ensureRepository`, `runGit`/`runGitRaw`,
+    `parseRepositoryRequest`, `parseBranchName`, `currentBranch`,
+    `parseBranchHeader`, `parsePorcelainStatus`) for future Git tools.
 - Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs`,
   `docker.ps`, `docker.logs`, `systemctl.status`, `journal.logs` — advertise
   `confirmation_level = none`; write tools `pm2.restart`, `docker.restart`,
-  and `systemctl.restart` advertise `confirmation_level = required`):
+  and `systemctl.restart`, and `git.pull` advertise
+  `confirmation_level = required`):
   - `system.uptime` — runs `/usr/bin/uptime` via `exec.CommandContext`;
     returns `{"stdout","stderr","exit_code"}`.
   - `system.memory` — parses `/proc/meminfo` (Linux only) and returns
@@ -313,6 +315,23 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     a path outside a work tree, a non-zero `git branch` exit, or malformed
     output (multi-line branch/upstream names) all surface as errors. No raw
     git output is ever returned.
+  - `git.pull` — the first write-capable Git tool
+    (`confirmation_level = required`). Verifies `git` is installed
+    (`git --version`), verifies the repository path exists and is inside a
+    Git work tree, resolves the checked-out branch and its upstream (via
+    `git branch --show-current` and `git rev-parse @{u}`, sharing
+    `currentBranch` with `git.branch`), then runs
+    `git -C <repository> pull --ff-only`. Detached HEAD and a missing
+    upstream are hard errors. The command never merges, rebases, forces, or
+    resets — only fast-forwards are allowed. The structured result is
+    `{"repository","updated","branch","upstream","message"}` with message
+    `Already up to date.` or `Fast-forward completed.`. Missing `git`, a
+    non-existent repository, a path outside a work tree, detached HEAD, no
+    upstream configured, a non-fast-forwardable history
+    (`fast-forward not possible`), local changes that would be overwritten
+    (`merge required`), any other non-zero `git pull` exit, or unrecognized
+    output (malformed) all surface as errors. No raw git output is ever
+    returned.
 - Availability per tool (`Availability(ctx)`): the `system.*` tools report
   `unsupported platform` on non-Linux hosts and are available on Linux; the
   `pm2.*`/`docker.*`/`systemctl.*` tools and `journal.logs` report
