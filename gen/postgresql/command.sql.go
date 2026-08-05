@@ -12,20 +12,22 @@ import (
 )
 
 const createCommand = `-- name: CreateCommand :one
-INSERT INTO commands (agent_id, tool_name, payload, status)
+INSERT INTO commands (agent_id, tool_name, payload, status, confirmation_status)
 VALUES (
     $1,
     $2,
     $3,
-    'pending'
+    'pending',
+    $4
 )
 RETURNING id, status
 `
 
 type CreateCommandParams struct {
-	AgentID  uuid.UUID
-	ToolName string
-	Payload  []byte
+	AgentID            uuid.UUID
+	ToolName           string
+	Payload            []byte
+	ConfirmationStatus string
 }
 
 type CreateCommandRow struct {
@@ -33,9 +35,15 @@ type CreateCommandRow struct {
 	Status string
 }
 
-// Persist a new command in pending state.
+// Persist a new command in pending state. confirmation_status is resolved
+// from the target tool's capability ('approved' or 'pending').
 func (q *Queries) CreateCommand(ctx context.Context, arg CreateCommandParams) (CreateCommandRow, error) {
-	row := q.db.QueryRow(ctx, createCommand, arg.AgentID, arg.ToolName, arg.Payload)
+	row := q.db.QueryRow(ctx, createCommand,
+		arg.AgentID,
+		arg.ToolName,
+		arg.Payload,
+		arg.ConfirmationStatus,
+	)
 	var i CreateCommandRow
 	err := row.Scan(&i.ID, &i.Status)
 	return i, err

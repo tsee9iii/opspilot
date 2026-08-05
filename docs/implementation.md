@@ -26,6 +26,7 @@ Architectural decisions are documented in:
 | Execution policy                                 | —                               | gates tools              | Implemented     |
 | Tool metadata (name, version, description, schema, confirmation) | `capabilities.parameter_schema`, `capabilities.confirmation_level` | advertised at startup | Implemented     |
 | Confirmation policy (none / required)            | persisted per capability        | metadata on each tool    | Implemented     |
+| Confirmation enforcement                          | `commands.confirmation_status`  | —                        | Implemented     |
 | Payload schema validation                        | —                               | `gojsonschema` in executor | Implemented     |
 | Tool Registry | — | `Register`/`Find`/`List` | Implemented |
 | `system.uptime` tool | — | `/usr/bin/uptime` | Implemented |
@@ -62,6 +63,7 @@ All JSON. Errors use `{"error":{"code","message"}}`.
 | POST   | `/api/v1/commands/start`    | —               | `200 {command_id,status}`                | 400, 403 `command_not_owned`, 404 `not_found`, 409 `invalid_transition`, 500 |
 | POST   | `/api/v1/commands/complete` | —               | `200 {command_id,status}`                | same as `start`                                                              |
 | POST   | `/api/v1/commands/fail`     | —               | `200 {command_id,status}`                | same as `start`                                                              |
+| POST   | `/api/v1/commands/approve`  | —               | `200 {status}`                           | 400 `validation_error`, 404 `command_not_found`, 500                          |
 | POST   | `/api/v1/capabilities`      | agent_id+secret | `200 {status,count}`                     | 400, 401 `invalid_credentials`, 500                                          |
 
 Request bodies:
@@ -71,6 +73,7 @@ Request bodies:
 - `create`: `agent_id`, `tool`, `payload` (JSON object)
 - `lease`: `agent_id`
 - `start`/`complete`/`fail`: `agent_id`, `command_id` (+ `result` for complete, `error` for fail)
+- `approve`: `command_id`
 - `capabilities`: `agent_id`, `secret`, `capabilities[{tool_name,version,description,parameter_schema,confirmation_level}]`
 
 ## 3. Database schema
@@ -84,6 +87,8 @@ Migrations (`sql/migrations/0001..0007`):
 - `0005_capabilities.sql` — `capabilities`
 - `0006_capability_parameter_schema.sql` — adds `capabilities.parameter_schema`
 - `0007_capability_confirmation.sql` — adds `capabilities.confirmation_level`
+- `0008_command_confirmation.sql` — adds `commands.confirmation_status` (default
+  `approved`) and `commands.confirmed_at`
 
 Tables:
 
@@ -93,9 +98,12 @@ Tables:
   `status`, `last_heartbeat`, `created_at`, `updated_at`.
 - **commands** — `id`, `agent_id` FK, `tool_name`, `payload` JSONB, `status`,
   `result` JSONB, `error`, `leased_at`, `lease_owner`, `started_at`,
-  `completed_at`, `created_at`, `updated_at`. State machine:
+  `completed_at`, `confirmation_status` (`approved` | `pending`, default
+  `approved`), `confirmed_at`, `created_at`, `updated_at`. State machine:
   `pending → leased → running → completed | failed`, enforced by atomic
-  `UPDATE ... WHERE status = '<expected>'`.
+  `UPDATE ... WHERE status = '<expected>'`. Commands are only leased when
+  `confirmation_status = 'approved'`; `pending` commands wait for
+  `POST /api/v1/commands/approve`.
 - **registration_tokens** — `id`, `token_hash` UNIQUE (HMAC-SHA256 hex),
   `environment`, `expires_at`, `revoked_at`, `created_at`. Tokens are deleted
   on consumption; no `used_at` column.
@@ -347,7 +355,30 @@ docs/                   architecture, implementation, roadmap, adr/
 - Registration-token admin endpoints (`Create`/`Revoke` exist in the
   repository but are not exposed over HTTP)
 - Command results query / history API; capability and agent listing endpoints
-- Audit, alert, and confirmation tables/domains
+- Audit and alert tables/domains
 - Additional tools (Docker SDK); tool sandboxing; tool version matrix
 - Token rotation; metrics and observability beyond zap logs
 - Migration tooling (`cmd/cli`, `migrate-*` Makefile targets)
+
+## 13. Confirmation enforcement
+
+- Commands targeting write tools are gated on operator approval before they
+  can be leased. The capability's `confirmation_level` (see §6) is metadata;
+  enforcement is central-side only and the agent runtime is unchanged.
+- **Creation** (`internal/application/command/create.go`): `CreateUseCase`
+  resolves the target tool's confirmation level from the agent's capabilities
+  (via `ConfirmationResolver` — implemented by the postgres
+  `CapabilityRepository.ConfirmationLevel`). Level `required` sets
+  `confirmation_status = pending`; level `none` (or a missing capability)
+  sets `confirmation_status = approved`.
+- **Leasing** (`sql/queries/lease_command.sql`): `LeaseNextCommand` adds
+  `AND c.confirmation_status = 'approved'` to its sub-select, so pending
+  commands are never leased and never reach the agent. Existing rows without
+  the column default to `approved`.
+- **Approval** (`internal/application/command/approve.go` +
+  `POST /api/v1/commands/approve`): `ApprovalUseCase` validates the command id,
+  then the repository atomically updates
+  `confirmation_status = 'approved', confirmed_at = now()` where the command
+  is still `pending`. Approving an already-approved command is an idempotent
+  success; a missing command returns `404 command_not_found`. Approval is
+  independent of the command's lifecycle status.

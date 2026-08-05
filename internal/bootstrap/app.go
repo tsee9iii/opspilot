@@ -114,14 +114,15 @@ func (a *App) buildHandler() http.Handler {
 	)
 	heartbeatUC := agent.NewHeartbeatUseCase(agentRepo, secretHasher)
 	commandRepo := postgres.NewCommandRepository(a.pool)
-	createCommandUC := appcommand.NewCreateUseCase(commandRepo)
+	capabilityRepo := postgres.NewCapabilityRepository(a.pool)
+	createCommandUC := appcommand.NewCreateUseCase(commandRepo, capabilityRepo)
 	leaseCommandUC := appcommand.NewLeaseUseCase(commandRepo)
 	executionCommandUC := appcommand.NewExecutionUseCase(commandRepo)
-	capabilityRepo := postgres.NewCapabilityRepository(a.pool)
+	approvalCommandUC := appcommand.NewApprovalUseCase(commandRepo)
 	capabilityUC := appcapability.NewSyncUseCase(agentRepo, capabilityRepo, secretHasher)
 	return httpx.NewRouter(
 		httpx.NewAgentHandler(registerUC, heartbeatUC),
-		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC),
+		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC, approvalCommandUC),
 		httpx.NewCapabilityHandler(capabilityUC),
 	)
 }

@@ -31,9 +31,10 @@ func (r *CommandRepository) CreateCommand(ctx context.Context, req appcommand.Cr
 	}
 
 	row, err := r.q.CreateCommand(ctx, postgresql.CreateCommandParams{
-		AgentID:  agentID,
-		ToolName: req.Tool,
-		Payload:  req.Payload,
+		AgentID:            agentID,
+		ToolName:           req.Tool,
+		Payload:            req.Payload,
+		ConfirmationStatus: req.ConfirmationStatus,
 	})
 	if err != nil {
 		return appcommand.CreateCommandResponse{}, fmt.Errorf("postgres: create command: %w", err)
@@ -138,6 +139,41 @@ func (r *CommandRepository) FailCommand(ctx context.Context, req appcommand.Fail
 		return appcommand.FailCommandResponse{}, fmt.Errorf("postgres: fail command: %w", err)
 	}
 	return appcommand.FailCommandResponse{CommandID: row.ID.String(), Status: row.Status}, nil
+}
+
+// ApproveCommand transitions a command awaiting confirmation (pending ->
+// approved) and stamps confirmed_at. Approving an already-approved command is
+// an idempotent success; approving a non-existent command is not found.
+func (r *CommandRepository) ApproveCommand(ctx context.Context, req appcommand.ApproveCommandRequest) (appcommand.ApproveCommandResponse, error) {
+	id, err := uuid.Parse(req.CommandID)
+	if err != nil {
+		return appcommand.ApproveCommandResponse{}, fmt.Errorf("postgres: parse command id: %w", err)
+	}
+
+	row, err := r.q.ApproveCommand(ctx, id)
+	if err == nil {
+		return appcommand.ApproveCommandResponse{
+			CommandID: row.ID.String(),
+			Status:    appcommand.ConfirmationApproved,
+		}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return appcommand.ApproveCommandResponse{}, fmt.Errorf("postgres: approve command: %w", err)
+	}
+
+	// No pending row matched: the command is either missing or already
+	// approved. Distinguish the two to keep approval idempotent.
+	cmd, err := r.q.GetCommandByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return appcommand.ApproveCommandResponse{}, appcommand.ErrCommandNotFound
+	}
+	if err != nil {
+		return appcommand.ApproveCommandResponse{}, fmt.Errorf("postgres: get command: %w", err)
+	}
+	return appcommand.ApproveCommandResponse{
+		CommandID: cmd.ID.String(),
+		Status:    appcommand.ConfirmationApproved,
+	}, nil
 }
 
 // assertTransition verifies the command exists, is owned by the agent, and is

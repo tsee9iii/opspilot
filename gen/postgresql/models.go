@@ -35,19 +35,21 @@ type Capabilities struct {
 }
 
 type Commands struct {
-	ID          uuid.UUID
-	AgentID     uuid.UUID
-	ToolName    string
-	Payload     []byte
-	Status      string
-	Result      []byte
-	Error       pgtype.Text
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
-	LeasedAt    pgtype.Timestamptz
-	LeaseOwner  pgtype.Text
-	StartedAt   pgtype.Timestamptz
-	CompletedAt pgtype.Timestamptz
+	ID                 uuid.UUID
+	AgentID            uuid.UUID
+	ToolName           string
+	Payload            []byte
+	Status             string
+	Result             []byte
+	Error              pgtype.Text
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	LeasedAt           pgtype.Timestamptz
+	LeaseOwner         pgtype.Text
+	StartedAt          pgtype.Timestamptz
+	CompletedAt        pgtype.Timestamptz
+	ConfirmationStatus string
+	ConfirmedAt        pgtype.Timestamptz
 }
 
 type RegistrationTokens struct {

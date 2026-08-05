@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/google/uuid"
 )
@@ -16,14 +17,21 @@ var (
 )
 
 type CreateCommandRequest struct {
-	AgentID string
-	Tool    string
-	Payload []byte
+	AgentID            string
+	Tool               string
+	Payload            []byte
+	ConfirmationStatus string
 }
 
 type CreateCommandResponse struct {
 	CommandID string
 	Status    string
+}
+
+// ConfirmationResolver resolves a tool's confirmation level from the agent's
+// registered capabilities.
+type ConfirmationResolver interface {
+	ConfirmationLevel(ctx context.Context, agentID uuid.UUID, toolName string) (string, error)
 }
 
 // Repository defines the persistence contract required by the command use cases.
@@ -33,18 +41,21 @@ type Repository interface {
 	StartCommand(ctx context.Context, req StartCommandRequest) (StartCommandResponse, error)
 	CompleteCommand(ctx context.Context, req CompleteCommandRequest) (CompleteCommandResponse, error)
 	FailCommand(ctx context.Context, req FailCommandRequest) (FailCommandResponse, error)
+	ApproveCommand(ctx context.Context, req ApproveCommandRequest) (ApproveCommandResponse, error)
 }
 
 type CreateUseCase struct {
-	repo Repository
+	repo    Repository
+	confirm ConfirmationResolver
 }
 
-func NewCreateUseCase(repo Repository) *CreateUseCase {
-	return &CreateUseCase{repo: repo}
+func NewCreateUseCase(repo Repository, confirm ConfirmationResolver) *CreateUseCase {
+	return &CreateUseCase{repo: repo, confirm: confirm}
 }
 
 func (uc *CreateUseCase) Create(ctx context.Context, req CreateCommandRequest) (CreateCommandResponse, error) {
-	if _, err := uuid.Parse(req.AgentID); err != nil {
+	agentID, err := uuid.Parse(req.AgentID)
+	if err != nil {
 		return CreateCommandResponse{}, ErrInvalidAgentID
 	}
 	if req.Tool == "" {
@@ -52,6 +63,16 @@ func (uc *CreateUseCase) Create(ctx context.Context, req CreateCommandRequest) (
 	}
 	if len(req.Payload) == 0 {
 		return CreateCommandResponse{}, ErrPayloadRequired
+	}
+
+	level, err := uc.confirm.ConfirmationLevel(ctx, agentID, req.Tool)
+	if err != nil {
+		return CreateCommandResponse{}, fmt.Errorf("create command: resolve confirmation: %w", err)
+	}
+
+	req.ConfirmationStatus = ConfirmationApproved
+	if level == ConfirmationRequiredLevel {
+		req.ConfirmationStatus = ConfirmationPending
 	}
 	return uc.repo.CreateCommand(ctx, req)
 }

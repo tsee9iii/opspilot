@@ -15,3 +15,11 @@ DO UPDATE SET version = EXCLUDED.version,
               parameter_schema = EXCLUDED.parameter_schema,
               confirmation_level = EXCLUDED.confirmation_level,
               updated_at = now();
+
+-- name: GetCapabilityByAgentTool :one
+-- Resolve a tool's confirmation level for an agent. Used at command creation
+-- to decide whether the command requires operator confirmation.
+SELECT confirmation_level
+FROM capabilities
+WHERE agent_id = sqlc.arg('agent_id')
+  AND tool_name = sqlc.arg('tool_name');

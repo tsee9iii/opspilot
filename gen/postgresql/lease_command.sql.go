@@ -22,6 +22,7 @@ WHERE id = (
     FROM commands AS c
     WHERE c.agent_id = $2
       AND c.status = 'pending'
+      AND c.confirmation_status = 'approved'
     ORDER BY c.created_at
     LIMIT 1
     FOR UPDATE SKIP LOCKED
@@ -44,8 +45,10 @@ type LeaseNextCommandRow struct {
 	LeaseOwner pgtype.Text
 }
 
-// Atomically lease the oldest pending command for an agent.
+// Atomically lease the oldest pending, operator-approved command for an agent.
 // FOR UPDATE SKIP LOCKED guarantees only one leaser claims each row.
+// Commands awaiting confirmation (confirmation_status != 'approved') are
+// never leased.
 func (q *Queries) LeaseNextCommand(ctx context.Context, arg LeaseNextCommandParams) (LeaseNextCommandRow, error) {
 	row := q.db.QueryRow(ctx, leaseNextCommand, arg.LeaseOwner, arg.AgentID)
 	var i LeaseNextCommandRow

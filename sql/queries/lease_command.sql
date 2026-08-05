@@ -1,6 +1,8 @@
 -- name: LeaseNextCommand :one
--- Atomically lease the oldest pending command for an agent.
+-- Atomically lease the oldest pending, operator-approved command for an agent.
 -- FOR UPDATE SKIP LOCKED guarantees only one leaser claims each row.
+-- Commands awaiting confirmation (confirmation_status != 'approved') are
+-- never leased.
 UPDATE commands
 SET status = 'leased',
     leased_at = now(),
@@ -10,6 +12,7 @@ WHERE id = (
     FROM commands AS c
     WHERE c.agent_id = sqlc.arg('agent_id')
       AND c.status = 'pending'
+      AND c.confirmation_status = 'approved'
     ORDER BY c.created_at
     LIMIT 1
     FOR UPDATE SKIP LOCKED

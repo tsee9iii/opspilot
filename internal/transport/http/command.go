@@ -12,10 +12,11 @@ type CommandHandler struct {
 	create    *command.CreateUseCase
 	lease     *command.LeaseUseCase
 	execution *command.ExecutionUseCase
+	approval  *command.ApprovalUseCase
 }
 
-func NewCommandHandler(create *command.CreateUseCase, lease *command.LeaseUseCase, execution *command.ExecutionUseCase) *CommandHandler {
-	return &CommandHandler{create: create, lease: lease, execution: execution}
+func NewCommandHandler(create *command.CreateUseCase, lease *command.LeaseUseCase, execution *command.ExecutionUseCase, approval *command.ApprovalUseCase) *CommandHandler {
+	return &CommandHandler{create: create, lease: lease, execution: execution, approval: approval}
 }
 
 func (h *CommandHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -154,6 +155,32 @@ func (h *CommandHandler) Fail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, FailCommandResponse{CommandID: resp.CommandID, Status: resp.Status})
+}
+
+func (h *CommandHandler) Approve(w http.ResponseWriter, r *http.Request) {
+	var reqDTO ApproveCommandRequest
+	if err := json.NewDecoder(r.Body).Decode(&reqDTO); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
+		return
+	}
+	if reqDTO.CommandID == "" {
+		writeError(w, http.StatusBadRequest, "validation_error", "command_id is required")
+		return
+	}
+
+	resp, err := h.approval.Approve(r.Context(), command.ApproveCommandRequest{CommandID: reqDTO.CommandID})
+	if err != nil {
+		switch {
+		case errors.Is(err, command.ErrInvalidCommandID):
+			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
+		case errors.Is(err, command.ErrCommandNotFound):
+			writeError(w, http.StatusNotFound, "command_not_found", "command not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "failed to approve command")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, ApproveCommandResponse{Status: resp.Status})
 }
 
 func writeExecutionError(w http.ResponseWriter, err error, action string) {

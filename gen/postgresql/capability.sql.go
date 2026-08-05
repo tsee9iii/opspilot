@@ -11,6 +11,27 @@ import (
 	uuid "github.com/google/uuid"
 )
 
+const getCapabilityByAgentTool = `-- name: GetCapabilityByAgentTool :one
+SELECT confirmation_level
+FROM capabilities
+WHERE agent_id = $1
+  AND tool_name = $2
+`
+
+type GetCapabilityByAgentToolParams struct {
+	AgentID  uuid.UUID
+	ToolName string
+}
+
+// Resolve a tool's confirmation level for an agent. Used at command creation
+// to decide whether the command requires operator confirmation.
+func (q *Queries) GetCapabilityByAgentTool(ctx context.Context, arg GetCapabilityByAgentToolParams) (string, error) {
+	row := q.db.QueryRow(ctx, getCapabilityByAgentTool, arg.AgentID, arg.ToolName)
+	var confirmation_level string
+	err := row.Scan(&confirmation_level)
+	return confirmation_level, err
+}
+
 const upsertCapability = `-- name: UpsertCapability :exec
 INSERT INTO capabilities (agent_id, tool_name, version, description, parameter_schema, confirmation_level)
 VALUES (
