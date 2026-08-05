@@ -102,6 +102,8 @@ func (t *blockingTool) Version() string { return "0.0.1" }
 
 func (t *blockingTool) Description() string { return "blocking tool" }
 
+func (t *blockingTool) ParameterSchema() string { return toolEmptyParameterSchema }
+
 func (t *blockingTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()

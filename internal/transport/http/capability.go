@@ -35,9 +35,10 @@ func (h *CapabilityHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, c := range reqDTO.Capabilities {
 		req.Capabilities = append(req.Capabilities, capability.Capability{
-			ToolName:    c.ToolName,
-			Version:     c.Version,
-			Description: c.Description,
+			ToolName:        c.ToolName,
+			Version:         c.Version,
+			Description:     c.Description,
+			ParameterSchema: c.ParameterSchema,
 		})
 	}
 
@@ -76,6 +77,8 @@ func validateSyncCapabilities(req SyncCapabilitiesRequest) error {
 			return errors.New("capability version is required")
 		case c.Description == "":
 			return errors.New("capability description is required")
+		case len(c.ParameterSchema) == 0:
+			return errors.New("capability parameter_schema is required")
 		}
 	}
 	return nil

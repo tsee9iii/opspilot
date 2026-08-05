@@ -42,6 +42,10 @@ func main() {
 
 	registry := agent.NewRegistry()
 	registry.Register(agent.NewUptimeTool())
+	registry.Register(agent.NewMemoryTool())
+	registry.Register(agent.NewCPUTool())
+	registry.Register(agent.NewDiskTool())
+	registry.Register(agent.NewProcessesTool())
 
 	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()), registry)
 

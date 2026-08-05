@@ -15,6 +15,10 @@ type commandResult struct {
 	ExitCode int    `json:"exit_code"`
 }
 
+// toolEmptyParameterSchema is the parameter schema of tools that accept no
+// payload fields.
+const toolEmptyParameterSchema = `{"type":"object","properties":{}}`
+
 // runCommand runs a single binary and returns stdout, stderr and the exit
 // code as JSON. Context expiry (e.g. a policy timeout) surfaces as a
 // "tool timed out" error.

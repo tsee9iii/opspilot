@@ -24,8 +24,13 @@ Architectural decisions are documented in:
 | Command leasing (atomic, FIFO)                   | `POST /api/v1/commands/lease`   | poll loop                | Implemented     |
 | Command lifecycle transitions                    | `start` / `complete` / `fail`   | reports them             | Implemented     |
 | Execution policy                                 | —                               | gates tools              | Implemented     |
-| Tool Registry                                    | —                               | `Register`/`Find`/`List` | Implemented     |
-| `system.uptime` tool                             | —                               | `/usr/bin/uptime`        | Implemented     |
+| Tool metadata (name, version, description, schema) | `capabilities.parameter_schema` | advertised at startup   | Implemented     |
+| Tool Registry | — | `Register`/`Find`/`List` | Implemented |
+| `system.uptime` tool | — | `/usr/bin/uptime` | Implemented |
+| `system.memory` tool | — | `/proc/meminfo` | Implemented |
+| `system.cpu` tool | — | `/proc/stat` | Implemented |
+| `system.disk` tool | — | `statfs(2)` on `/` | Implemented |
+| `system.processes` tool | — | `/proc/<pid>/*` | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker / systemctl tools, sandboxing             | —                               | —                        | Not Implemented |
@@ -55,17 +60,18 @@ Request bodies:
 - `create`: `agent_id`, `tool`, `payload` (JSON object)
 - `lease`: `agent_id`
 - `start`/`complete`/`fail`: `agent_id`, `command_id` (+ `result` for complete, `error` for fail)
-- `capabilities`: `agent_id`, `secret`, `capabilities[{tool_name,version,description}]`
+- `capabilities`: `agent_id`, `secret`, `capabilities[{tool_name,version,description,parameter_schema}]`
 
 ## 3. Database schema
 
-Migrations (`sql/migrations/0001..0005`):
+Migrations (`sql/migrations/0001..0006`):
 
 - `0001_init.sql` — `servers`, `agents`, `commands`
 - `0002_agent_auth.sql` — `registration_tokens`
 - `0003_command_lease.sql` — adds `commands.leased_at`, `commands.lease_owner`
 - `0004_command_execution.sql` — adds `commands.started_at`, `commands.completed_at`
 - `0005_capabilities.sql` — `capabilities`
+- `0006_capability_parameter_schema.sql` — adds `capabilities.parameter_schema`
 
 Tables:
 
@@ -82,7 +88,8 @@ Tables:
   `environment`, `expires_at`, `revoked_at`, `created_at`. Tokens are deleted
   on consumption; no `used_at` column.
 - **capabilities** — `id`, `agent_id` FK, `tool_name`, `version`,
-  `description`, `created_at`, `updated_at`; `UNIQUE (agent_id, tool_name)`.
+  `description`, `parameter_schema` JSONB (JSON Schema document), `created_at`,
+  `updated_at`; `UNIQUE (agent_id, tool_name)`.
 
 Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 `idx_capabilities_agent_id`.
@@ -106,26 +113,49 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 ## 5. Tool Registry
 
 - `internal/agent/registry.go` — `Tool` interface (`Name`, `Version`,
-  `Description`, `Execute(ctx, payload)`) and a concurrency-safe `Registry`
-  with `Register`, `Find`, `List` (sorted names).
+  `Description`, `ParameterSchema`, `Execute(ctx, payload)`) and a
+  concurrency-safe `Registry` with `Register`, `Find`, `List` (sorted names).
+  `ParameterSchema` returns the tool's accepted payload as a JSON Schema
+  document; tools that take no payload return `{"type":"object","properties":{}}`.
 - `internal/agent/registry_executor.go` — the agent's `Executor`. It never
   switches on tool names: `Find → policy gate → Execute`. An unregistered name
   returns `tool not implemented`.
 - Tools live in `internal/agent/*_tool.go` and are registered once in
   `cmd/agent/main.go`.
-- Current tool:
+- Current tools:
   - `system.uptime` — runs `/usr/bin/uptime` via `exec.CommandContext`;
     returns `{"stdout","stderr","exit_code"}`.
+  - `system.memory` — parses `/proc/meminfo` (Linux only) and returns
+    `{"total_bytes","available_bytes","used_bytes","used_percent"}`. `used`
+    and `used_percent` derive from `MemTotal` − `MemAvailable` (values are
+    kB, converted to bytes); `used_percent` is rounded to two decimals.
+  - `system.cpu` — parses `/proc/stat` (Linux only) and returns
+    `{"user_percent","system_percent","idle_percent"}`. Percentages come from
+    two samples taken ~200 ms apart (per-interval deltas), bucket user+nice /
+    system+irq+softirq / idle+iowait, and are rounded to two decimals.
+  - `system.disk` — calls `statfs(2)` on `/` (Linux only) and returns
+    `{"total_bytes","used_bytes","available_bytes","used_percent"}`.
+    `used` = total − free (`bfree`), `available` = `bavail`; `used_percent`
+    is `used / total` rounded to two decimals.
+  - `system.processes` — scans `/proc/<pid>/{comm,stat,status}` (Linux only)
+    and returns the top 10 processes by CPU usage as
+    `{"pid","name","cpu_percent","memory_bytes"}`. Two samples taken ~200 ms
+    apart give per-interval CPU deltas; `cpu_percent` is expressed as a
+    fraction of a single core (like `top`, can exceed 100 for multi-threaded
+    processes) and `memory_bytes` is `VmRSS`. Processes present in only one
+    sample are skipped.
 - `internal/agent/tool.go` — `runCommand` helper shared by tools; context
   expiry surfaces as a `tool timed out` error.
 
 ## 6. Capability registration
 
 - Agent startup calls `registry.List()` and sends each tool's `name`, `version`,
-  and `description` to `POST /api/v1/capabilities` (one request, batch body).
+  `description`, and `parameter_schema` to `POST /api/v1/capabilities` (one
+  request, batch body).
 - Central (`internal/application/capability`) authenticates the agent (by id +
   secret) then upserts each capability (`ON CONFLICT (agent_id, tool_name) DO
-UPDATE`), returning the number persisted.
+  UPDATE`), returning the number persisted. The parameter schema is stored in
+  `capabilities.parameter_schema` (JSONB).
 
 ## 7. Execution policy
 
@@ -180,7 +210,7 @@ internal/
   transport/http/       router, handlers, DTOs
 pkg/config/             env-based config
 pkg/logger/             zap logger
-sql/migrations/         0001..0005
+sql/migrations/         0001..0006
 sql/queries/            annotated SQL for sqlc
 deployments/            docker-compose (PostgreSQL 16)
 docs/                   architecture, implementation, roadmap, adr/

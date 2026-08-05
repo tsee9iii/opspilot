@@ -8,9 +8,10 @@ import (
 )
 
 type capabilityInfo struct {
-	ToolName    string `json:"tool_name"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
+	ToolName        string          `json:"tool_name"`
+	Version         string          `json:"version"`
+	Description     string          `json:"description"`
+	ParameterSchema json.RawMessage `json:"parameter_schema"`
 }
 
 type syncCapabilitiesRequest struct {
@@ -30,9 +31,10 @@ func (a *Agent) registerCapabilities(ctx context.Context) error {
 	for _, name := range names {
 		tool, _ := a.registry.Find(name)
 		req.Capabilities = append(req.Capabilities, capabilityInfo{
-			ToolName:    tool.Name(),
-			Version:     tool.Version(),
-			Description: tool.Description(),
+			ToolName:        tool.Name(),
+			Version:         tool.Version(),
+			Description:     tool.Description(),
+			ParameterSchema: json.RawMessage(tool.ParameterSchema()),
 		})
 	}
 

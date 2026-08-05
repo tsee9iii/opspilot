@@ -12,24 +12,27 @@ import (
 )
 
 const upsertCapability = `-- name: UpsertCapability :exec
-INSERT INTO capabilities (agent_id, tool_name, version, description)
+INSERT INTO capabilities (agent_id, tool_name, version, description, parameter_schema)
 VALUES (
     $1,
     $2,
     $3,
-    $4
+    $4,
+    $5
 )
 ON CONFLICT (agent_id, tool_name)
 DO UPDATE SET version = EXCLUDED.version,
               description = EXCLUDED.description,
+              parameter_schema = EXCLUDED.parameter_schema,
               updated_at = now()
 `
 
 type UpsertCapabilityParams struct {
-	AgentID     uuid.UUID
-	ToolName    string
-	Version     string
-	Description string
+	AgentID         uuid.UUID
+	ToolName        string
+	Version         string
+	Description     string
+	ParameterSchema []byte
 }
 
 // Register or refresh one tool capability for an agent.
@@ -39,6 +42,7 @@ func (q *Queries) UpsertCapability(ctx context.Context, arg UpsertCapabilityPara
 		arg.ToolName,
 		arg.Version,
 		arg.Description,
+		arg.ParameterSchema,
 	)
 	return err
 }

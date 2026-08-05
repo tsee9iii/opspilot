@@ -46,6 +46,8 @@ func (t *fakeTool) Version() string { return "0.0.1" }
 
 func (t *fakeTool) Description() string { return "fake tool" }
 
+func (t *fakeTool) ParameterSchema() string { return toolEmptyParameterSchema }
+
 func (t *fakeTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
 	return []byte(`{"ok":true}`), nil
 }

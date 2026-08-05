@@ -7,10 +7,13 @@ import (
 )
 
 // Tool executes a named operation against a payload and returns a result.
+// ParameterSchema returns the tool's accepted payload as a JSON Schema
+// document.
 type Tool interface {
 	Name() string
 	Version() string
 	Description() string
+	ParameterSchema() string
 	Execute(ctx context.Context, payload []byte) ([]byte, error)
 }
 

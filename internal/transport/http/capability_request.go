@@ -1,5 +1,7 @@
 package http
 
+import "encoding/json"
+
 type SyncCapabilitiesRequest struct {
 	AgentID      string          `json:"agent_id"`
 	Secret       string          `json:"secret"`
@@ -7,7 +9,8 @@ type SyncCapabilitiesRequest struct {
 }
 
 type CapabilityDTO struct {
-	ToolName    string `json:"tool_name"`
-	Version     string `json:"version"`
-	Description string `json:"description"`
+	ToolName        string          `json:"tool_name"`
+	Version         string          `json:"version"`
+	Description     string          `json:"description"`
+	ParameterSchema json.RawMessage `json:"parameter_schema"`
 }

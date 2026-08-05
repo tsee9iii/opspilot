@@ -27,6 +27,10 @@ func (t *UptimeTool) Description() string {
 	return toolUptimeDescription
 }
 
+func (t *UptimeTool) ParameterSchema() string {
+	return toolEmptyParameterSchema
+}
+
 func (t *UptimeTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	return runCommand(ctx, "/usr/bin/uptime")
 }

@@ -23,13 +23,14 @@ type Agents struct {
 }
 
 type Capabilities struct {
-	ID          uuid.UUID
-	AgentID     uuid.UUID
-	ToolName    string
-	Version     string
-	Description string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID              uuid.UUID
+	AgentID         uuid.UUID
+	ToolName        string
+	Version         string
+	Description     string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ParameterSchema []byte
 }
 
 type Commands struct {
