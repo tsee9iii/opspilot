@@ -32,6 +32,7 @@ func TestToolMetadata(t *testing.T) {
 		journal.NewJournalLogsTool(),
 		git.NewGitStatusTool(),
 		git.NewGitCurrentCommitTool(),
+		git.NewGitBranchTool(),
 	}
 	for _, tool := range tools {
 		if tool.Name() == "" || tool.Version() == "" || tool.Description() == "" {
@@ -62,6 +63,7 @@ func TestConfirmationLevels(t *testing.T) {
 		journal.NewJournalLogsTool(),
 		git.NewGitStatusTool(),
 		git.NewGitCurrentCommitTool(),
+		git.NewGitBranchTool(),
 	}
 	for _, tool := range readOnly {
 		if tool.ConfirmationLevel() != agent.ConfirmationNone {
@@ -99,6 +101,7 @@ func TestToolAvailabilityContract(t *testing.T) {
 		journal.NewJournalLogsTool(),
 		git.NewGitStatusTool(),
 		git.NewGitCurrentCommitTool(),
+		git.NewGitBranchTool(),
 	}
 	for _, tool := range tools {
 		ok, reason := tool.Availability(context.Background())

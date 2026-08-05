@@ -10,41 +10,51 @@ import (
 	"github.com/opspilot/opspilot/internal/agent"
 )
 
-// fakeGitLogRun dispatches on git subcommands: --version, rev-parse, and log.
-func fakeGitLogRun(logOut string) func(context.Context, string, ...string) ([]byte, error) {
+// fakeGitBranchRun dispatches on git subcommands: --version, the work-tree
+// rev-parse check, branch --show-current, and the @{u} upstream lookup.
+// An empty upstream makes the @{u} command fail like git does when no
+// upstream is configured.
+func fakeGitBranchRun(branchName, upstream string) func(context.Context, string, ...string) ([]byte, error) {
 	return func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		switch {
 		case len(args) > 0 && args[0] == "--version":
 			b, _ := json.Marshal(agent.CommandResult{Stdout: "git version 2.39.2\n", ExitCode: 0})
 			return b, nil
-		case len(args) > 2 && args[2] == "rev-parse":
+		case len(args) > 3 && args[3] == "--is-inside-work-tree":
 			b, _ := json.Marshal(agent.CommandResult{Stdout: "true\n", ExitCode: 0})
 			return b, nil
-		default:
-			b, _ := json.Marshal(agent.CommandResult{Stdout: logOut, ExitCode: 0})
+		case len(args) > 2 && args[2] == "branch":
+			b, _ := json.Marshal(agent.CommandResult{Stdout: branchName, ExitCode: 0})
+			return b, nil
+		default: // @{u}
+			if upstream == "" {
+				b, _ := json.Marshal(agent.CommandResult{Stderr: "fatal: no upstream configured for branch 'x'\n", ExitCode: 128})
+				return b, nil
+			}
+			b, _ := json.Marshal(agent.CommandResult{Stdout: upstream, ExitCode: 0})
 			return b, nil
 		}
 	}
 }
 
-func executeCurrentCommit(t *testing.T, run func(context.Context, string, ...string) ([]byte, error), repository string) (gitCurrentCommitResult, error) {
+func executeBranch(t *testing.T, run func(context.Context, string, ...string) ([]byte, error), repository string) (gitBranchResult, error) {
 	t.Helper()
-	tool := NewGitCurrentCommitTool()
+	tool := NewGitBranchTool()
 	tool.run = run
 	out, err := tool.Execute(context.Background(), []byte(`{"repository":"`+repository+`"}`))
 	if err != nil {
-		return gitCurrentCommitResult{}, err
+		return gitBranchResult{}, err
 	}
-	var res gitCurrentCommitResult
+	var res gitBranchResult
 	if err := json.Unmarshal(out, &res); err != nil {
 		t.Fatalf("decode result: %v", err)
 	}
 	return res, nil
 }
 
-func TestGitCurrentCommitToolMetadata(t *testing.T) {
-	tool := NewGitCurrentCommitTool()
-	if tool.Name() != ToolGitCurrentCommit {
+func TestGitBranchToolMetadata(t *testing.T) {
+	tool := NewGitBranchTool()
+	if tool.Name() != ToolGitBranch {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
 	if tool.Version() != "1.0.0" {
@@ -58,8 +68,8 @@ func TestGitCurrentCommitToolMetadata(t *testing.T) {
 	}
 }
 
-func TestGitCurrentCommitParameterSchema(t *testing.T) {
-	tool := NewGitCurrentCommitTool()
+func TestGitBranchParameterSchema(t *testing.T) {
+	tool := NewGitBranchTool()
 	var schema struct {
 		Type                 string   `json:"type"`
 		Required             []string `json:"required"`
@@ -87,9 +97,9 @@ func TestGitCurrentCommitParameterSchema(t *testing.T) {
 	}
 }
 
-func TestGitCurrentCommitToolAvailability(t *testing.T) {
+func TestGitBranchToolAvailability(t *testing.T) {
 	t.Run("available", func(t *testing.T) {
-		tool := NewGitCurrentCommitTool()
+		tool := NewGitBranchTool()
 		var binary string
 		tool.run = func(_ context.Context, bin string, _ ...string) ([]byte, error) {
 			binary = bin
@@ -106,7 +116,7 @@ func TestGitCurrentCommitToolAvailability(t *testing.T) {
 	})
 
 	t.Run("not installed", func(t *testing.T) {
-		tool := NewGitCurrentCommitTool()
+		tool := NewGitBranchTool()
 		tool.run = func(_ context.Context, _ string, _ ...string) ([]byte, error) {
 			return nil, exec.ErrNotFound
 		}
@@ -117,7 +127,7 @@ func TestGitCurrentCommitToolAvailability(t *testing.T) {
 	})
 
 	t.Run("not runnable", func(t *testing.T) {
-		tool := NewGitCurrentCommitTool()
+		tool := NewGitBranchTool()
 		tool.run = func(_ context.Context, _ string, _ ...string) ([]byte, error) {
 			b, _ := json.Marshal(agent.CommandResult{ExitCode: 1})
 			return b, nil
@@ -129,82 +139,61 @@ func TestGitCurrentCommitToolAvailability(t *testing.T) {
 	})
 }
 
-func TestGitCurrentCommitToolExecute(t *testing.T) {
+func TestGitBranchWithUpstream(t *testing.T) {
 	repo := t.TempDir()
-	logOut := "3fbe91cb3d1f5d9d8a2b0c4d5e6f7a8b9c0d1e2f\n3fbe91c\nJohn Smith\njohn@example.com\n2026-08-06T14:35:12+08:00\nFix deployment race condition"
-	res, err := executeCurrentCommit(t, fakeGitLogRun(logOut), repo)
+	res, err := executeBranch(t, fakeGitBranchRun("main\n", "origin/main\n"), repo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if res.Repository != repo {
 		t.Fatalf("unexpected repository: %s", res.Repository)
 	}
-	if res.Commit != "3fbe91cb3d1f5d9d8a2b0c4d5e6f7a8b9c0d1e2f" {
-		t.Fatalf("unexpected commit: %s", res.Commit)
+	if res.Branch != "main" || res.Detached {
+		t.Fatalf("unexpected branch: %+v", res)
 	}
-	if res.ShortCommit != "3fbe91c" {
-		t.Fatalf("unexpected short commit: %s", res.ShortCommit)
-	}
-	if res.AuthorName != "John Smith" {
-		t.Fatalf("unexpected author name: %s", res.AuthorName)
-	}
-	if res.AuthorEmail != "john@example.com" {
-		t.Fatalf("unexpected author email: %s", res.AuthorEmail)
-	}
-	if res.AuthorDate != "2026-08-06T14:35:12+08:00" {
-		t.Fatalf("unexpected author date: %s", res.AuthorDate)
-	}
-	if res.Subject != "Fix deployment race condition" {
-		t.Fatalf("unexpected subject: %s", res.Subject)
+	if !res.Tracking || res.Upstream != "origin/main" {
+		t.Fatalf("unexpected upstream: tracking=%v upstream=%q", res.Tracking, res.Upstream)
 	}
 }
 
-func TestGitCurrentCommitToolEmptySubject(t *testing.T) {
-	logOut := "3fbe91cb3d1f5d9d8a2b0c4d5e6f7a8b9c0d1e2f\n3fbe91c\nJohn Smith\njohn@example.com\n2026-08-06T14:35:12+08:00\n"
-	res, err := executeCurrentCommit(t, fakeGitLogRun(logOut), t.TempDir())
+func TestGitBranchWithoutUpstream(t *testing.T) {
+	repo := t.TempDir()
+	res, err := executeBranch(t, fakeGitBranchRun("feature/login\n", ""), repo)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if res.Subject != "" {
-		t.Fatalf("unexpected subject: %q", res.Subject)
+	if res.Branch != "feature/login" || res.Detached {
+		t.Fatalf("unexpected branch: %+v", res)
 	}
-	if res.Commit == "" || res.AuthorDate == "" {
-		t.Fatalf("unexpected result: %+v", res)
-	}
-}
-
-func TestGitCurrentCommitToolNoCommits(t *testing.T) {
-	tool := NewGitCurrentCommitTool()
-	tool.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
-		switch {
-		case len(args) > 0 && args[0] == "--version":
-			b, _ := json.Marshal(agent.CommandResult{Stdout: "git version 2.39.2\n", ExitCode: 0})
-			return b, nil
-		case len(args) > 2 && args[2] == "rev-parse":
-			b, _ := json.Marshal(agent.CommandResult{Stdout: "true\n", ExitCode: 0})
-			return b, nil
-		default:
-			b, _ := json.Marshal(agent.CommandResult{Stderr: "fatal: your current branch 'main' does not have any commits yet\n", ExitCode: 128})
-			return b, nil
-		}
-	}
-	_, err := tool.Execute(context.Background(), []byte(`{"repository":"`+t.TempDir()+`"}`))
-	if err == nil || !strings.Contains(err.Error(), "repository has no commits") {
-		t.Fatalf("expected no-commits error, got: %v", err)
+	if res.Tracking || res.Upstream != "" {
+		t.Fatalf("expected no upstream, got tracking=%v upstream=%q", res.Tracking, res.Upstream)
 	}
 }
 
-func TestGitCurrentCommitToolRepositoryNotFound(t *testing.T) {
-	tool := NewGitCurrentCommitTool()
-	tool.run = fakeGitLogRun("")
+func TestGitBranchDetachedHead(t *testing.T) {
+	res, err := executeBranch(t, fakeGitBranchRun("", ""), t.TempDir())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !res.Detached || res.Branch != "" {
+		t.Fatalf("expected detached HEAD with empty branch, got %+v", res)
+	}
+	if res.Tracking || res.Upstream != "" {
+		t.Fatalf("expected no tracking when detached, got %+v", res)
+	}
+}
+
+func TestGitBranchRepositoryNotFound(t *testing.T) {
+	tool := NewGitBranchTool()
+	tool.run = fakeGitBranchRun("main\n", "origin/main\n")
 	_, err := tool.Execute(context.Background(), []byte(`{"repository":"/nonexistent/repo"}`))
 	if err == nil || !strings.Contains(err.Error(), "repository does not exist") {
 		t.Fatalf("expected repository-not-found error, got: %v", err)
 	}
 }
 
-func TestGitCurrentCommitToolInvalidRepository(t *testing.T) {
-	tool := NewGitCurrentCommitTool()
+func TestGitBranchInvalidRepository(t *testing.T) {
+	tool := NewGitBranchTool()
 	tool.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		if len(args) > 0 && args[0] == "--version" {
 			b, _ := json.Marshal(agent.CommandResult{Stdout: "git version 2.39.2\n", ExitCode: 0})
@@ -219,8 +208,8 @@ func TestGitCurrentCommitToolInvalidRepository(t *testing.T) {
 	}
 }
 
-func TestGitCurrentCommitToolGitNotInstalled(t *testing.T) {
-	tool := NewGitCurrentCommitTool()
+func TestGitBranchGitNotInstalled(t *testing.T) {
+	tool := NewGitBranchTool()
 	tool.run = func(_ context.Context, _ string, _ ...string) ([]byte, error) {
 		return nil, exec.ErrNotFound
 	}
@@ -230,18 +219,19 @@ func TestGitCurrentCommitToolGitNotInstalled(t *testing.T) {
 	}
 }
 
-func TestGitCurrentCommitToolMalformedOutput(t *testing.T) {
+func TestGitBranchMalformedOutput(t *testing.T) {
 	cases := []struct {
-		name   string
-		output string
+		name     string
+		branch   string
+		upstream string
 	}{
-		{"too few fields", "3fbe91c\nJohn Smith\n"},
-		{"too many fields", "3fbe91c\nshort\nJohn Smith\njohn@example.com\n2026-08-06T14:35:12+08:00\nsubject\njunk"},
-		{"empty", ""},
+		{"branch with newline", "main\nextra\n", "origin/main\n"},
+		{"upstream with newline", "main\n", "origin/main\njunk\n"},
+		{"empty upstream", "main\n", "\n"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := executeCurrentCommit(t, fakeGitLogRun(tc.output), t.TempDir())
+			_, err := executeBranch(t, fakeGitBranchRun(tc.branch, tc.upstream), t.TempDir())
 			if err == nil || !strings.Contains(err.Error(), "malformed") {
 				t.Fatalf("expected malformed output error, got: %v", err)
 			}
@@ -249,14 +239,14 @@ func TestGitCurrentCommitToolMalformedOutput(t *testing.T) {
 	}
 }
 
-func TestGitCurrentCommitToolExecutionFailure(t *testing.T) {
-	tool := NewGitCurrentCommitTool()
+func TestGitBranchExecutionFailure(t *testing.T) {
+	tool := NewGitBranchTool()
 	tool.run = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 		switch {
 		case len(args) > 0 && args[0] == "--version":
 			b, _ := json.Marshal(agent.CommandResult{Stdout: "git version 2.39.2\n", ExitCode: 0})
 			return b, nil
-		case len(args) > 2 && args[2] == "rev-parse":
+		case len(args) > 3 && args[3] == "--is-inside-work-tree":
 			b, _ := json.Marshal(agent.CommandResult{Stdout: "true\n", ExitCode: 0})
 			return b, nil
 		default:
@@ -270,7 +260,7 @@ func TestGitCurrentCommitToolExecutionFailure(t *testing.T) {
 	}
 }
 
-func TestGitCurrentCommitParseRequestErrors(t *testing.T) {
+func TestGitBranchParseRequestErrors(t *testing.T) {
 	cases := []string{
 		``,
 		`{}`,
@@ -278,7 +268,7 @@ func TestGitCurrentCommitParseRequestErrors(t *testing.T) {
 		`not json`,
 	}
 	for _, c := range cases {
-		if _, err := parseRepositoryRequest([]byte(c), "git.current_commit"); err == nil {
+		if _, err := parseRepositoryRequest([]byte(c), "git.branch"); err == nil {
 			t.Fatalf("expected error for payload: %q", c)
 		}
 	}

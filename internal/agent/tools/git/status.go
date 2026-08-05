@@ -28,10 +28,6 @@ const toolGitStatusParameterSchema = `{
   "additionalProperties": false
 }`
 
-type gitStatusRequest struct {
-	Repository string `json:"repository"`
-}
-
 type gitStatusResult struct {
 	Repository string      `json:"repository"`
 	Branch     string      `json:"branch"`
@@ -76,7 +72,7 @@ func (t *GitStatusTool) Availability(ctx context.Context) (bool, string) {
 }
 
 func (t *GitStatusTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
-	repository, err := parseGitStatusRequest(payload)
+	repository, err := parseRepositoryRequest(payload, "git.status")
 	if err != nil {
 		return nil, err
 	}
@@ -98,21 +94,6 @@ func (t *GitStatusTool) Execute(ctx context.Context, payload []byte) ([]byte, er
 		return nil, fmt.Errorf("git.status: %w", err)
 	}
 	return json.Marshal(result)
-}
-
-// parseGitStatusRequest extracts and validates the repository path.
-func parseGitStatusRequest(payload []byte) (string, error) {
-	if len(payload) == 0 {
-		return "", errors.New("git.status: payload is required")
-	}
-	var req gitStatusRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return "", fmt.Errorf("git.status: invalid payload: %w", err)
-	}
-	if req.Repository == "" {
-		return "", errors.New("git.status: repository is required")
-	}
-	return req.Repository, nil
 }
 
 // parseGitStatus splits porcelain output into a branch header and change

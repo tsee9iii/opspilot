@@ -46,6 +46,7 @@ Architectural decisions are documented in:
 | `journal.logs` tool | — | `journalctl -u <svc> -n <n>` | Implemented |
 | `git.status` tool | — | `git status --porcelain=v1 --branch` | Implemented |
 | `git.current_commit` tool | — | `git log -1 --pretty=format:%H%n%h%n%an%n%ae%n%ad%n%s` | Implemented |
+| `git.branch` tool | — | `git branch --show-current` + `git rev-parse @{u}` | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -179,9 +180,10 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     `restart.go`.
   - `internal/agent/tools/journal/` — `journal.*` tools: `journal.go`.
   - `internal/agent/tools/git/` — `git.*` tools: `status.go`, `commit.go`,
-    plus `common.go` with reusable Git helpers (`ensureGit`,
-    `ensureRepository`, `runGit`, `parseBranchHeader`,
-    `parsePorcelainStatus`) for future Git tools.
+    `branch.go`, plus `common.go` with reusable Git helpers (`ensureGit`,
+    `ensureRepository`, `runGit`/`runGitRaw`, `parseRepositoryRequest`,
+    `parseBranchName`, `parseBranchHeader`, `parsePorcelainStatus`) for
+    future Git tools.
 - Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs`,
   `docker.ps`, `docker.logs`, `systemctl.status`, `journal.logs` — advertise
   `confirmation_level = none`; write tools `pm2.restart`, `docker.restart`,
@@ -296,12 +298,28 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     a path outside a work tree, a repository with no commits, a non-zero
     `git log` exit, or malformed output (not exactly six fields) all surface
     as errors. No raw git output is ever returned.
+  - `git.branch` — verifies `git` is installed (`git --version`), verifies the
+    repository path exists and is inside a Git work tree
+    (`git -C <repository> rev-parse --is-inside-work-tree`), then runs
+    `git -C <repository> branch --show-current` and
+    `git -C <repository> rev-parse --abbrev-ref --symbolic-full-name @{u}`,
+    returning
+    `{"repository","branch","detached","tracking","upstream"}`. An empty
+    branch means detached HEAD (`detached: true`, `branch: ""`); a non-zero
+    exit from the `@{u}` lookup means no upstream is configured and is **not**
+    an error (`tracking: false`, `upstream: ""`). The upstream is preserved
+    exactly as reported by Git. The payload is validated against its parameter
+    schema (`repository` required). Missing `git`, a non-existent repository,
+    a path outside a work tree, a non-zero `git branch` exit, or malformed
+    output (multi-line branch/upstream names) all surface as errors. No raw
+    git output is ever returned.
 - Availability per tool (`Availability(ctx)`): the `system.*` tools report
   `unsupported platform` on non-Linux hosts and are available on Linux; the
   `pm2.*`/`docker.*`/`systemctl.*` tools and `journal.logs` report
   `<binary> is not installed` / `<binary> is not runnable` based on a
   `--version` check; the `git.*` tools report `git is not installed` /
-  `git is not runnable` based on `git --version` (see §14).- `internal/agent/tool.go` — shared helpers used by the tool packages:
+  `git is not runnable` based on `git --version` (see §14).
+- `internal/agent/tool.go` — shared helpers used by the tool packages:
   `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
   `{"type":"object","properties":{}}` schema constant), `RunCommand`
   (context-aware `exec.CommandContext` wrapper; context expiry surfaces as a

@@ -28,10 +28,6 @@ const toolGitCurrentCommitParameterSchema = `{
   "additionalProperties": false
 }`
 
-type gitCurrentCommitRequest struct {
-	Repository string `json:"repository"`
-}
-
 type gitCurrentCommitResult struct {
 	Repository  string `json:"repository"`
 	Commit      string `json:"commit"`
@@ -77,7 +73,7 @@ func (t *GitCurrentCommitTool) Availability(ctx context.Context) (bool, string) 
 }
 
 func (t *GitCurrentCommitTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
-	repository, err := parseGitCurrentCommitRequest(payload)
+	repository, err := parseRepositoryRequest(payload, "git.current_commit")
 	if err != nil {
 		return nil, err
 	}
@@ -103,21 +99,6 @@ func (t *GitCurrentCommitTool) Execute(ctx context.Context, payload []byte) ([]b
 		return nil, fmt.Errorf("git.current_commit: %w", err)
 	}
 	return json.Marshal(result)
-}
-
-// parseGitCurrentCommitRequest extracts and validates the repository path.
-func parseGitCurrentCommitRequest(payload []byte) (string, error) {
-	if len(payload) == 0 {
-		return "", errors.New("git.current_commit: payload is required")
-	}
-	var req gitCurrentCommitRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
-		return "", fmt.Errorf("git.current_commit: invalid payload: %w", err)
-	}
-	if req.Repository == "" {
-		return "", errors.New("git.current_commit: repository is required")
-	}
-	return req.Repository, nil
 }
 
 // parseGitCurrentCommit parses the six newline-separated fields emitted by

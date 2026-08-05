@@ -57,27 +57,64 @@ func ensureRepository(ctx context.Context, run func(context.Context, string, ...
 	return nil
 }
 
-// runGit runs git with the given arguments and returns stdout.
-func runGit(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), tool string, args ...string) (string, error) {
+// runGitRaw runs git with the given arguments and returns stdout, stderr and
+// the exit code without treating a non-zero exit as an error. It lets callers
+// distinguish an expected failure (e.g. `git rev-parse @{u}` when no upstream
+// exists) from a hard error.
+func runGitRaw(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), args ...string) (stdout, stderr string, exitCode int, err error) {
 	out, err := run(ctx, "git", args...)
 	if err != nil {
-		return "", wrapGitError(tool, err)
+		return "", "", 0, err
 	}
 	var res agent.CommandResult
 	if err := json.Unmarshal(out, &res); err != nil {
-		return "", fmt.Errorf("%s: decode command result: %w", tool, err)
+		return "", "", 0, err
 	}
-	if res.ExitCode != 0 {
-		return "", fmt.Errorf("%s: git %s failed: %s", tool, strings.Join(args, " "), strings.TrimSpace(res.Stderr))
-	}
-	return res.Stdout, nil
+	return res.Stdout, res.Stderr, res.ExitCode, nil
 }
 
-func wrapGitError(tool string, err error) error {
-	if errors.Is(err, exec.ErrNotFound) {
-		return fmt.Errorf("%s: git is not installed: %w", tool, err)
+// runGit runs git with the given arguments and returns stdout, treating a
+// non-zero exit as an error.
+func runGit(ctx context.Context, run func(context.Context, string, ...string) ([]byte, error), tool string, args ...string) (string, error) {
+	stdout, stderr, exitCode, err := runGitRaw(ctx, run, args...)
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", fmt.Errorf("%s: git is not installed: %w", tool, err)
+		}
+		return "", fmt.Errorf("%s: decode command result: %w", tool, err)
 	}
-	return fmt.Errorf("%s: %w", tool, err)
+	if exitCode != 0 {
+		return "", fmt.Errorf("%s: git %s failed: %s", tool, strings.Join(args, " "), strings.TrimSpace(stderr))
+	}
+	return stdout, nil
+}
+
+// parseRepositoryRequest extracts and validates the required repository path
+// shared by the git.* tools.
+func parseRepositoryRequest(payload []byte, tool string) (string, error) {
+	if len(payload) == 0 {
+		return "", fmt.Errorf("%s: payload is required", tool)
+	}
+	var req struct {
+		Repository string `json:"repository"`
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		return "", fmt.Errorf("%s: invalid payload: %w", tool, err)
+	}
+	if req.Repository == "" {
+		return "", fmt.Errorf("%s: repository is required", tool)
+	}
+	return req.Repository, nil
+}
+
+// parseBranchName trims a single branch or upstream name from git output and
+// rejects output that spans more than one line.
+func parseBranchName(stdout string) (string, error) {
+	name := strings.TrimSpace(stdout)
+	if strings.Contains(name, "\n") {
+		return "", errors.New("malformed git output: unexpected newline in name")
+	}
+	return name, nil
 }
 
 // parseBranchHeader parses the first line of `git status --porcelain=v1

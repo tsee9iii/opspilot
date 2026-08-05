@@ -317,7 +317,7 @@ func TestGitStatusParseRequestErrors(t *testing.T) {
 		`not json`,
 	}
 	for _, c := range cases {
-		if _, err := parseGitStatusRequest([]byte(c)); err == nil {
+		if _, err := parseRepositoryRequest([]byte(c), "git.status"); err == nil {
 			t.Fatalf("expected error for payload: %q", c)
 		}
 	}
