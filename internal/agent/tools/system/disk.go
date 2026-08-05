@@ -57,6 +57,10 @@ func (t *DiskTool) ParameterSchema() string {
 	return agent.EmptyParameterSchema
 }
 
+func (t *DiskTool) ConfirmationLevel() agent.ConfirmationLevel {
+	return agent.ConfirmationNone
+}
+
 func (t *DiskTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
 	stat, err := t.statfs(t.rootPath)
 	if err != nil {

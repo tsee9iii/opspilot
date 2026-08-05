@@ -97,8 +97,8 @@ func TestSyncSuccess(t *testing.T) {
 	resp, err := uc.Sync(context.Background(), SyncRequest{
 		AgentID: agentID.String(), Secret: "good-secret",
 		Capabilities: []Capability{
-			{ToolName: "system.uptime", Version: "1.0.0", Description: "uptime", ParameterSchema: []byte(`{"type":"object","properties":{}}`)},
-			{ToolName: "system.disk", Version: "1.0.0", Description: "disk", ParameterSchema: []byte(`{"type":"object","properties":{"path":{"type":"string"}}}`)},
+			{ToolName: "system.uptime", Version: "1.0.0", Description: "uptime", ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "none"},
+			{ToolName: "pm2.restart", Version: "1.0.0", Description: "restart", ParameterSchema: []byte(`{"type":"object","required":["process"],"properties":{"process":{"type":"string"}}}`), Confirmation: "required"},
 		},
 	})
 	if err != nil {
@@ -116,7 +116,13 @@ func TestSyncSuccess(t *testing.T) {
 	if string(caps.upserted[0].ParameterSchema) != `{"type":"object","properties":{}}` {
 		t.Fatalf("unexpected first schema: %s", caps.upserted[0].ParameterSchema)
 	}
-	if string(caps.upserted[1].ParameterSchema) != `{"type":"object","properties":{"path":{"type":"string"}}}` {
+	if string(caps.upserted[1].ParameterSchema) != `{"type":"object","required":["process"],"properties":{"process":{"type":"string"}}}` {
 		t.Fatalf("unexpected second schema: %s", caps.upserted[1].ParameterSchema)
+	}
+	if caps.upserted[0].Confirmation != "none" {
+		t.Fatalf("unexpected first confirmation: %s", caps.upserted[0].Confirmation)
+	}
+	if caps.upserted[1].Confirmation != "required" {
+		t.Fatalf("unexpected second confirmation: %s", caps.upserted[1].Confirmation)
 	}
 }

@@ -6,14 +6,27 @@ import (
 	"sync"
 )
 
+// ConfirmationLevel describes whether executing a tool requires explicit
+// operator confirmation.
+type ConfirmationLevel string
+
+const (
+	// ConfirmationNone marks read-only tools that require no confirmation.
+	ConfirmationNone ConfirmationLevel = "none"
+	// ConfirmationRequired marks write tools that must be confirmed before
+	// they run.
+	ConfirmationRequired ConfirmationLevel = "required"
+)
+
 // Tool executes a named operation against a payload and returns a result.
 // ParameterSchema returns the tool's accepted payload as a JSON Schema
-// document.
+// document; ConfirmationLevel is the tool's confirmation metadata.
 type Tool interface {
 	Name() string
 	Version() string
 	Description() string
 	ParameterSchema() string
+	ConfirmationLevel() ConfirmationLevel
 	Execute(ctx context.Context, payload []byte) ([]byte, error)
 }
 

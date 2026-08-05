@@ -8,10 +8,11 @@ import (
 )
 
 type capabilityInfo struct {
-	ToolName        string          `json:"tool_name"`
-	Version         string          `json:"version"`
-	Description     string          `json:"description"`
-	ParameterSchema json.RawMessage `json:"parameter_schema"`
+	ToolName        string            `json:"tool_name"`
+	Version         string            `json:"version"`
+	Description     string            `json:"description"`
+	ParameterSchema json.RawMessage   `json:"parameter_schema"`
+	Confirmation    ConfirmationLevel `json:"confirmation_level"`
 }
 
 type syncCapabilitiesRequest struct {
@@ -35,6 +36,7 @@ func (a *Agent) registerCapabilities(ctx context.Context) error {
 			Version:         tool.Version(),
 			Description:     tool.Description(),
 			ParameterSchema: json.RawMessage(tool.ParameterSchema()),
+			Confirmation:    tool.ConfirmationLevel(),
 		})
 	}
 

@@ -107,6 +107,8 @@ func (t *blockingTool) Description() string { return "blocking tool" }
 
 func (t *blockingTool) ParameterSchema() string { return agent.EmptyParameterSchema }
 
+func (t *blockingTool) ConfirmationLevel() agent.ConfirmationLevel { return agent.ConfirmationNone }
+
 func (t *blockingTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()

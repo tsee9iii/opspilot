@@ -79,6 +79,10 @@ func (t *ProcessesTool) ParameterSchema() string {
 	return agent.EmptyParameterSchema
 }
 
+func (t *ProcessesTool) ConfirmationLevel() agent.ConfirmationLevel {
+	return agent.ConfirmationNone
+}
+
 func (t *ProcessesTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	first, err := t.sample(t.procPath)
 	if err != nil {

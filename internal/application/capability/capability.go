@@ -21,6 +21,7 @@ type Capability struct {
 	Version         string
 	Description     string
 	ParameterSchema []byte
+	Confirmation    string
 }
 
 type SyncRequest struct {

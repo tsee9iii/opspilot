@@ -24,7 +24,8 @@ Architectural decisions are documented in:
 | Command leasing (atomic, FIFO)                   | `POST /api/v1/commands/lease`   | poll loop                | Implemented     |
 | Command lifecycle transitions                    | `start` / `complete` / `fail`   | reports them             | Implemented     |
 | Execution policy                                 | —                               | gates tools              | Implemented     |
-| Tool metadata (name, version, description, schema) | `capabilities.parameter_schema` | advertised at startup   | Implemented     |
+| Tool metadata (name, version, description, schema, confirmation) | `capabilities.parameter_schema`, `capabilities.confirmation_level` | advertised at startup | Implemented     |
+| Confirmation policy (none / required)            | persisted per capability        | metadata on each tool    | Implemented     |
 | Tool Registry | — | `Register`/`Find`/`List` | Implemented |
 | `system.uptime` tool | — | `/usr/bin/uptime` | Implemented |
 | `system.memory` tool | — | `/proc/meminfo` | Implemented |
@@ -63,11 +64,11 @@ Request bodies:
 - `create`: `agent_id`, `tool`, `payload` (JSON object)
 - `lease`: `agent_id`
 - `start`/`complete`/`fail`: `agent_id`, `command_id` (+ `result` for complete, `error` for fail)
-- `capabilities`: `agent_id`, `secret`, `capabilities[{tool_name,version,description,parameter_schema}]`
+- `capabilities`: `agent_id`, `secret`, `capabilities[{tool_name,version,description,parameter_schema,confirmation_level}]`
 
 ## 3. Database schema
 
-Migrations (`sql/migrations/0001..0006`):
+Migrations (`sql/migrations/0001..0007`):
 
 - `0001_init.sql` — `servers`, `agents`, `commands`
 - `0002_agent_auth.sql` — `registration_tokens`
@@ -75,6 +76,7 @@ Migrations (`sql/migrations/0001..0006`):
 - `0004_command_execution.sql` — adds `commands.started_at`, `commands.completed_at`
 - `0005_capabilities.sql` — `capabilities`
 - `0006_capability_parameter_schema.sql` — adds `capabilities.parameter_schema`
+- `0007_capability_confirmation.sql` — adds `capabilities.confirmation_level`
 
 Tables:
 
@@ -91,7 +93,8 @@ Tables:
   `environment`, `expires_at`, `revoked_at`, `created_at`. Tokens are deleted
   on consumption; no `used_at` column.
 - **capabilities** — `id`, `agent_id` FK, `tool_name`, `version`,
-  `description`, `parameter_schema` JSONB (JSON Schema document), `created_at`,
+  `description`, `parameter_schema` JSONB (JSON Schema document),
+  `confirmation_level` TEXT (`none` | `required`), `created_at`,
   `updated_at`; `UNIQUE (agent_id, tool_name)`.
 
 Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
@@ -116,10 +119,14 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 ## 5. Tool Registry
 
 - `internal/agent/registry.go` — `Tool` interface (`Name`, `Version`,
-  `Description`, `ParameterSchema`, `Execute(ctx, payload)`) and a
-  concurrency-safe `Registry` with `Register`, `Find`, `List` (sorted names).
-  `ParameterSchema` returns the tool's accepted payload as a JSON Schema
-  document; tools that take no payload return `{"type":"object","properties":{}}`.
+  `Description`, `ParameterSchema`, `ConfirmationLevel`, `Execute(ctx, payload)`)
+  and a concurrency-safe `Registry` with `Register`, `Find`, `List` (sorted
+  names). `ParameterSchema` returns the tool's accepted payload as a JSON
+  Schema document; tools that take no payload return
+  `{"type":"object","properties":{}}`. `ConfirmationLevel` returns the tool's
+  confirmation metadata: `agent.ConfirmationNone` (`"none"`) for read-only
+  tools and `agent.ConfirmationRequired` (`"required"`) for write tools. There
+  is no execution-behavior change — confirmation is metadata only.
 - `internal/agent/registry_executor.go` — the agent's `Executor`. It never
   switches on tool names: `Find → policy gate → Execute`. An unregistered name
   returns `tool not implemented`.
@@ -130,7 +137,9 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     `statfs(2)`), `processes.go`.
   - `internal/agent/tools/pm2/` — `pm2.*` tools: `list.go`, `logs.go`,
     `restart.go`.
-- Current tools:
+- Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs` —
+  advertise `confirmation_level = none`; the write tool `pm2.restart`
+  advertises `confirmation_level = required`):
   - `system.uptime` — runs `/usr/bin/uptime` via `exec.CommandContext`;
     returns `{"stdout","stderr","exit_code"}`.
   - `system.memory` — parses `/proc/meminfo` (Linux only) and returns
@@ -179,12 +188,14 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 ## 6. Capability registration
 
 - Agent startup calls `registry.List()` and sends each tool's `name`, `version`,
-  `description`, and `parameter_schema` to `POST /api/v1/capabilities` (one
-  request, batch body).
+  `description`, `parameter_schema`, and `confirmation_level` to
+  `POST /api/v1/capabilities` (one request, batch body).
 - Central (`internal/application/capability`) authenticates the agent (by id +
   secret) then upserts each capability (`ON CONFLICT (agent_id, tool_name) DO
   UPDATE`), returning the number persisted. The parameter schema is stored in
-  `capabilities.parameter_schema` (JSONB).
+  `capabilities.parameter_schema` (JSONB) and the confirmation level in
+  `capabilities.confirmation_level` (TEXT, validated to be `none` or
+  `required`).
 
 ## 7. Execution policy
 

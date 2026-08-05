@@ -27,5 +27,6 @@ func (r *CapabilityRepository) Upsert(ctx context.Context, agentID uuid.UUID, ca
 		Version:         cap.Version,
 		Description:     cap.Description,
 		ParameterSchema: cap.ParameterSchema,
+		Confirmation:    cap.Confirmation,
 	})
 }

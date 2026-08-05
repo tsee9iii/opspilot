@@ -48,6 +48,10 @@ func (t *PM2RestartTool) ParameterSchema() string {
 	return toolPM2RestartParameterSchema
 }
 
+func (t *PM2RestartTool) ConfirmationLevel() agent.ConfirmationLevel {
+	return agent.ConfirmationRequired
+}
+
 func (t *PM2RestartTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
 	process, err := parsePM2RestartRequest(payload)
 	if err != nil {

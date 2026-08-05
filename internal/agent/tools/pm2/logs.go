@@ -74,6 +74,10 @@ func (t *PM2LogsTool) ParameterSchema() string {
 	return toolPM2LogsParameterSchema
 }
 
+func (t *PM2LogsTool) ConfirmationLevel() agent.ConfirmationLevel {
+	return agent.ConfirmationNone
+}
+
 func (t *PM2LogsTool) Execute(ctx context.Context, payload []byte) ([]byte, error) {
 	process, lines, err := parsePM2LogsRequest(payload)
 	if err != nil {

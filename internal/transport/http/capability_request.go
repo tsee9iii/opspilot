@@ -13,4 +13,5 @@ type CapabilityDTO struct {
 	Version         string          `json:"version"`
 	Description     string          `json:"description"`
 	ParameterSchema json.RawMessage `json:"parameter_schema"`
+	Confirmation    string          `json:"confirmation_level"`
 }

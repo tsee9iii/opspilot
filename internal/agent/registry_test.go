@@ -51,6 +51,8 @@ func (t *fakeTool) Description() string { return "fake tool" }
 
 func (t *fakeTool) ParameterSchema() string { return agent.EmptyParameterSchema }
 
+func (t *fakeTool) ConfirmationLevel() agent.ConfirmationLevel { return agent.ConfirmationNone }
+
 func (t *fakeTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
 	return []byte(`{"ok":true}`), nil
 }

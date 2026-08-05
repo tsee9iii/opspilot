@@ -39,6 +39,7 @@ func (h *CapabilityHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			Version:         c.Version,
 			Description:     c.Description,
 			ParameterSchema: c.ParameterSchema,
+			Confirmation:    c.Confirmation,
 		})
 	}
 
@@ -79,6 +80,8 @@ func validateSyncCapabilities(req SyncCapabilitiesRequest) error {
 			return errors.New("capability description is required")
 		case len(c.ParameterSchema) == 0:
 			return errors.New("capability parameter_schema is required")
+		case c.Confirmation != "none" && c.Confirmation != "required":
+			return errors.New("capability confirmation_level must be one of: none, required")
 		}
 	}
 	return nil
