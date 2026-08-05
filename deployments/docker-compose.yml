@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks:
+      - opspilot
+    environment:
+      POSTGRES_USER: opspilot
+      POSTGRES_PASSWORD: opspilot
+      POSTGRES_DB: opspilot
+    ports:
+      - "5432:5432"
+    volumes:
+      - opspilot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opspilot -d opspilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  opspilot_pgdata:
+
+networks:
+  opspilot:
+    driver: bridge
