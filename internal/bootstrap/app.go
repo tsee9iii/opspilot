@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
+	"github.com/opspilot/opspilot/internal/application/agent"
 	"github.com/opspilot/opspilot/internal/infrastructure/postgres"
 	httpx "github.com/opspilot/opspilot/internal/transport/http"
 	"github.com/opspilot/opspilot/pkg/config"
@@ -62,7 +63,7 @@ func (a *App) Run(ctx context.Context) error {
 	defer func() { _ = a.log.Sync() }()
 	defer a.pool.Close()
 
-	handler := httpx.NewRouter()
+	handler := a.buildHandler()
 
 	server := &http.Server{
 		Addr:    fmt.Sprintf("%s:%d", a.cfg.HTTP.Host, a.cfg.HTTP.Port),
@@ -96,4 +97,11 @@ func (a *App) Run(ctx context.Context) error {
 
 	a.log.Info("application stopped")
 	return nil
+}
+
+func (a *App) buildHandler() http.Handler {
+	agentRepo := postgres.NewAgentRepository(a.pool)
+	registerUC := agent.NewRegisterUseCase(agentRepo)
+	agentHandler := httpx.NewAgentHandler(registerUC)
+	return httpx.NewRouter(agentHandler)
 }

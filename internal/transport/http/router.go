@@ -6,10 +6,10 @@ package http
 
 import "net/http"
 
-func NewRouter() http.Handler {
+func NewRouter(agents *AgentHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
-	mux.HandleFunc("POST /api/v1/agents/register", handleRegisterAgent)
+	mux.HandleFunc("POST /api/v1/agents/register", agents.Register)
 	return mux
 }
 

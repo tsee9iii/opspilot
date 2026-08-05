@@ -2,10 +2,7 @@ package agent
 
 import (
 	"context"
-	"errors"
 )
-
-var ErrNotImplemented = errors.New("agent: registration not implemented")
 
 type RegisterAgentRequest struct {
 	Secret      string
@@ -37,5 +34,5 @@ func NewRegisterUseCase(repo Repository) *RegisterUseCase {
 }
 
 func (uc *RegisterUseCase) Register(ctx context.Context, req RegisterAgentRequest) (RegisterAgentResponse, error) {
-	return RegisterAgentResponse{}, ErrNotImplemented
+	return uc.repo.RegisterAgent(ctx, req)
 }
