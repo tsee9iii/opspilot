@@ -115,8 +115,9 @@ func (a *App) buildHandler() http.Handler {
 	commandRepo := postgres.NewCommandRepository(a.pool)
 	createCommandUC := appcommand.NewCreateUseCase(commandRepo)
 	leaseCommandUC := appcommand.NewLeaseUseCase(commandRepo)
+	executionCommandUC := appcommand.NewExecutionUseCase(commandRepo)
 	return httpx.NewRouter(
 		httpx.NewAgentHandler(registerUC, heartbeatUC),
-		httpx.NewCommandHandler(createCommandUC, leaseCommandUC),
+		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC),
 	)
 }

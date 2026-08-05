@@ -13,6 +13,9 @@ func NewRouter(agents *AgentHandler, commands *CommandHandler) http.Handler {
 	mux.HandleFunc("POST /api/v1/agents/heartbeat", agents.Heartbeat)
 	mux.HandleFunc("POST /api/v1/commands", commands.Create)
 	mux.HandleFunc("POST /api/v1/commands/lease", commands.Lease)
+	mux.HandleFunc("POST /api/v1/commands/start", commands.Start)
+	mux.HandleFunc("POST /api/v1/commands/complete", commands.Complete)
+	mux.HandleFunc("POST /api/v1/commands/fail", commands.Fail)
 	return mux
 }
 

@@ -11,6 +11,8 @@ var (
 	ErrInvalidAgentID  = errors.New("invalid agent id")
 	ErrToolRequired    = errors.New("tool is required")
 	ErrPayloadRequired = errors.New("payload is required")
+	ErrResultRequired  = errors.New("result is required")
+	ErrErrorRequired   = errors.New("error is required")
 )
 
 type CreateCommandRequest struct {
@@ -28,6 +30,9 @@ type CreateCommandResponse struct {
 type Repository interface {
 	CreateCommand(ctx context.Context, req CreateCommandRequest) (CreateCommandResponse, error)
 	LeaseNextCommand(ctx context.Context, req LeaseCommandRequest) (LeaseCommandResponse, error)
+	StartCommand(ctx context.Context, req StartCommandRequest) (StartCommandResponse, error)
+	CompleteCommand(ctx context.Context, req CompleteCommandRequest) (CompleteCommandResponse, error)
+	FailCommand(ctx context.Context, req FailCommandRequest) (FailCommandResponse, error)
 }
 
 type CreateUseCase struct {
