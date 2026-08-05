@@ -2,7 +2,6 @@ package agent
 
 import (
 	"errors"
-	"strings"
 	"time"
 )
 
@@ -12,8 +11,7 @@ var (
 	ErrCommandNotAllowed = errors.New("command not allowed by policy")
 )
 
-// ExecutionPolicy authorizes shell command execution before it starts.
-// Program matching is done on the first token of the command string.
+// ExecutionPolicy authorizes tool execution before it starts.
 type ExecutionPolicy struct {
 	Enabled          bool
 	Timeout          time.Duration
@@ -22,16 +20,16 @@ type ExecutionPolicy struct {
 	WorkingDirectory string
 }
 
-// Allow returns nil if program may run, or a sentinel error describing the
-// policy decision. Denied commands win over the allow list.
-func (p ExecutionPolicy) Allow(program string) error {
+// Allow returns nil if name may run, or a sentinel error describing the
+// policy decision. Denied entries win over the allow list.
+func (p ExecutionPolicy) Allow(name string) error {
 	if !p.Enabled {
 		return ErrPolicyDisabled
 	}
-	if containsString(p.DeniedCommands, program) {
+	if containsString(p.DeniedCommands, name) {
 		return ErrCommandDenied
 	}
-	if len(p.AllowedCommands) > 0 && !containsString(p.AllowedCommands, program) {
+	if len(p.AllowedCommands) > 0 && !containsString(p.AllowedCommands, name) {
 		return ErrCommandNotAllowed
 	}
 	return nil
@@ -44,12 +42,4 @@ func containsString(list []string, v string) bool {
 		}
 	}
 	return false
-}
-
-func commandName(command string) string {
-	command = strings.TrimSpace(command)
-	if i := strings.IndexAny(command, " \t"); i >= 0 {
-		return command[:i]
-	}
-	return command
 }

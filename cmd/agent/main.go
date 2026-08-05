@@ -40,7 +40,10 @@ func main() {
 		log.Fatalf("agent: %v", err)
 	}
 
-	a := agent.New(agentCfg, zl, agent.NewShellExecutor(agentCfg.Policy()))
+	registry := agent.NewRegistry()
+	registry.Register(agent.NewUptimeTool())
+
+	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()))
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
