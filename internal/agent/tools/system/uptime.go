@@ -1,6 +1,10 @@
-package agent
+package system
 
-import "context"
+import (
+	"context"
+
+	"github.com/opspilot/opspilot/internal/agent"
+)
 
 const (
 	ToolSystemUptime      = "system.uptime"
@@ -28,9 +32,9 @@ func (t *UptimeTool) Description() string {
 }
 
 func (t *UptimeTool) ParameterSchema() string {
-	return toolEmptyParameterSchema
+	return agent.EmptyParameterSchema
 }
 
 func (t *UptimeTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
-	return runCommand(ctx, "/usr/bin/uptime")
+	return agent.RunCommand(ctx, "/usr/bin/uptime")
 }

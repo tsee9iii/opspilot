@@ -1,4 +1,4 @@
-package agent
+package system
 
 import (
 	"bufio"
@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/opspilot/opspilot/internal/agent"
 )
 
 const (
@@ -74,7 +76,7 @@ func (t *CPUTool) Description() string {
 }
 
 func (t *CPUTool) ParameterSchema() string {
-	return toolEmptyParameterSchema
+	return agent.EmptyParameterSchema
 }
 
 func (t *CPUTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {

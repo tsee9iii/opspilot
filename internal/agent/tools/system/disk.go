@@ -1,8 +1,10 @@
-package agent
+package system
 
 import (
 	"context"
 	"encoding/json"
+
+	"github.com/opspilot/opspilot/internal/agent"
 )
 
 const (
@@ -52,7 +54,7 @@ func (t *DiskTool) Description() string {
 }
 
 func (t *DiskTool) ParameterSchema() string {
-	return toolEmptyParameterSchema
+	return agent.EmptyParameterSchema
 }
 
 func (t *DiskTool) Execute(_ context.Context, _ []byte) ([]byte, error) {

@@ -1,4 +1,4 @@
-package agent
+package system
 
 import (
 	"bufio"
@@ -10,6 +10,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/opspilot/opspilot/internal/agent"
 )
 
 const (
@@ -50,7 +52,7 @@ func (t *MemoryTool) Description() string {
 }
 
 func (t *MemoryTool) ParameterSchema() string {
-	return toolEmptyParameterSchema
+	return agent.EmptyParameterSchema
 }
 
 func (t *MemoryTool) Execute(_ context.Context, _ []byte) ([]byte, error) {

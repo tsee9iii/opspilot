@@ -9,20 +9,21 @@ import (
 	"os/exec"
 )
 
-type commandResult struct {
+// CommandResult is the JSON shape produced by RunCommand.
+type CommandResult struct {
 	Stdout   string `json:"stdout"`
 	Stderr   string `json:"stderr"`
 	ExitCode int    `json:"exit_code"`
 }
 
-// toolEmptyParameterSchema is the parameter schema of tools that accept no
+// EmptyParameterSchema is the parameter schema of tools that accept no
 // payload fields.
-const toolEmptyParameterSchema = `{"type":"object","properties":{}}`
+const EmptyParameterSchema = `{"type":"object","properties":{}}`
 
-// runCommand runs a single binary and returns stdout, stderr and the exit
+// RunCommand runs a single binary and returns stdout, stderr and the exit
 // code as JSON. Context expiry (e.g. a policy timeout) surfaces as a
 // "tool timed out" error.
-func runCommand(ctx context.Context, path string, args ...string) ([]byte, error) {
+func RunCommand(ctx context.Context, path string, args ...string) ([]byte, error) {
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Stdout = &stdout
@@ -42,7 +43,7 @@ func runCommand(ctx context.Context, path string, args ...string) ([]byte, error
 		}
 	}
 
-	return json.Marshal(commandResult{
+	return json.Marshal(CommandResult{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
 		ExitCode: exitCode,

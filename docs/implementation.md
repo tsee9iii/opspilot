@@ -31,6 +31,9 @@ Architectural decisions are documented in:
 | `system.cpu` tool | — | `/proc/stat` | Implemented |
 | `system.disk` tool | — | `statfs(2)` on `/` | Implemented |
 | `system.processes` tool | — | `/proc/<pid>/*` | Implemented |
+| `pm2.list` tool | — | `pm2 jlist` | Implemented |
+| `pm2.logs` tool | — | `pm2 logs --nostream --raw` | Implemented |
+| `pm2.restart` tool | — | `pm2 restart` | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker / systemctl tools, sandboxing             | —                               | —                        | Not Implemented |
@@ -120,8 +123,13 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 - `internal/agent/registry_executor.go` — the agent's `Executor`. It never
   switches on tool names: `Find → policy gate → Execute`. An unregistered name
   returns `tool not implemented`.
-- Tools live in `internal/agent/*_tool.go` and are registered once in
-  `cmd/agent/main.go`.
+- Tools are grouped into category packages under `internal/agent/tools/` and
+  registered once in `cmd/agent/main.go`:
+  - `internal/agent/tools/system/` — `system.*` tools: `uptime.go`, `memory.go`,
+    `cpu.go`, `disk.go` (+ `diskstat_linux.go`/`diskstat_other.go` build-tagged
+    `statfs(2)`), `processes.go`.
+  - `internal/agent/tools/pm2/` — `pm2.*` tools: `list.go`, `logs.go`,
+    `restart.go`.
 - Current tools:
   - `system.uptime` — runs `/usr/bin/uptime` via `exec.CommandContext`;
     returns `{"stdout","stderr","exit_code"}`.
@@ -144,8 +152,29 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     fraction of a single core (like `top`, can exceed 100 for multi-threaded
     processes) and `memory_bytes` is `VmRSS`. Processes present in only one
     sample are skipped.
-- `internal/agent/tool.go` — `runCommand` helper shared by tools; context
-  expiry surfaces as a `tool timed out` error.
+  - `pm2.list` — runs `pm2 jlist` (Linux only, requires `pm2` on `PATH`) and
+    returns the running PM2 processes as
+    `{"name","status","pid","cpu_percent","memory_bytes","uptime"}`. Fields
+    map from `name`, `pm2_env.status`, `pid`, `monit.cpu`, `monit.memory`,
+    and `uptime` is derived from `pm2_env.pm_uptime` (start epoch, ms) in
+    seconds.
+  - `pm2.logs` — runs `pm2 logs <process> --lines <n> --nostream --raw --out`
+    and `--err` (Linux only, requires `pm2` on `PATH`) and returns
+    `{"process","stdout","stderr","lines"}`. The payload is validated against
+    its parameter schema: `process` is required; `lines` defaults to 100 and
+    must be 1..1000. The process is confirmed to exist via `pm2 jlist` first;
+    missing `pm2`, an unknown process, or a non-zero exit all surface as
+    errors.
+  - `pm2.restart` — verifies the process via `pm2 jlist` then runs
+    `pm2 restart <process>` (Linux only, requires `pm2` on `PATH`) and returns
+    `{"process","status":"restarted"}`. The payload is validated against its
+    parameter schema (`process` required); missing `pm2`, an unknown process,
+    or a restart failure all surface as errors.
+- `internal/agent/tool.go` — shared helpers used by the tool packages:
+  `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
+  `{"type":"object","properties":{}}` schema constant), and `RunCommand`
+  (context-aware `exec.CommandContext` wrapper); context expiry surfaces as a
+  `tool timed out` error.
 
 ## 6. Capability registration
 

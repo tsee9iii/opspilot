@@ -1,4 +1,4 @@
-package agent
+package agent_test
 
 import (
 	"context"
@@ -7,19 +7,22 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/opspilot/opspilot/internal/agent/tools/system"
 )
 
 func TestRegistryExecutorRunsTool(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register(NewUptimeTool())
+	reg := agent.NewRegistry()
+	reg.Register(system.NewUptimeTool())
 
-	exec := NewRegistryExecutor(reg, ExecutionPolicy{Enabled: true})
-	result, err := exec.Execute(context.Background(), ToolSystemUptime, nil)
+	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{Enabled: true})
+	result, err := exec.Execute(context.Background(), system.ToolSystemUptime, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var res commandResult
+	var res agent.CommandResult
 	if err := json.Unmarshal(result, &res); err != nil {
 		t.Fatalf("decode result: %v", err)
 	}
@@ -32,54 +35,54 @@ func TestRegistryExecutorRunsTool(t *testing.T) {
 }
 
 func TestRegistryExecutorUnknownTool(t *testing.T) {
-	reg := NewRegistry()
-	exec := NewRegistryExecutor(reg, ExecutionPolicy{Enabled: true})
+	reg := agent.NewRegistry()
+	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{Enabled: true})
 	_, err := exec.Execute(context.Background(), "noop", nil)
-	if !errors.Is(err, ErrToolNotImplemented) {
+	if !errors.Is(err, agent.ErrToolNotImplemented) {
 		t.Fatalf("expected ErrToolNotImplemented, got: %v", err)
 	}
 }
 
 func TestRegistryExecutorPolicyDenied(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register(NewUptimeTool())
-	exec := NewRegistryExecutor(reg, ExecutionPolicy{
+	reg := agent.NewRegistry()
+	reg.Register(system.NewUptimeTool())
+	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{
 		Enabled:        true,
-		DeniedCommands: []string{ToolSystemUptime},
+		DeniedCommands: []string{system.ToolSystemUptime},
 	})
-	_, err := exec.Execute(context.Background(), ToolSystemUptime, nil)
-	if !errors.Is(err, ErrCommandDenied) {
+	_, err := exec.Execute(context.Background(), system.ToolSystemUptime, nil)
+	if !errors.Is(err, agent.ErrCommandDenied) {
 		t.Fatalf("expected ErrCommandDenied, got: %v", err)
 	}
 }
 
 func TestRegistryExecutorPolicyNotAllowed(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register(NewUptimeTool())
-	exec := NewRegistryExecutor(reg, ExecutionPolicy{
+	reg := agent.NewRegistry()
+	reg.Register(system.NewUptimeTool())
+	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{
 		Enabled:         true,
 		AllowedCommands: []string{"other"},
 	})
-	_, err := exec.Execute(context.Background(), ToolSystemUptime, nil)
-	if !errors.Is(err, ErrCommandNotAllowed) {
+	_, err := exec.Execute(context.Background(), system.ToolSystemUptime, nil)
+	if !errors.Is(err, agent.ErrCommandNotAllowed) {
 		t.Fatalf("expected ErrCommandNotAllowed, got: %v", err)
 	}
 }
 
 func TestRegistryExecutorDisabledPolicy(t *testing.T) {
-	reg := NewRegistry()
-	reg.Register(NewUptimeTool())
-	exec := NewRegistryExecutor(reg, ExecutionPolicy{Enabled: false})
-	_, err := exec.Execute(context.Background(), ToolSystemUptime, nil)
-	if !errors.Is(err, ErrPolicyDisabled) {
+	reg := agent.NewRegistry()
+	reg.Register(system.NewUptimeTool())
+	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{Enabled: false})
+	_, err := exec.Execute(context.Background(), system.ToolSystemUptime, nil)
+	if !errors.Is(err, agent.ErrPolicyDisabled) {
 		t.Fatalf("expected ErrPolicyDisabled, got: %v", err)
 	}
 }
 
 func TestRegistryExecutorTimeout(t *testing.T) {
-	reg := NewRegistry()
+	reg := agent.NewRegistry()
 	reg.Register(&blockingTool{name: "slow"})
-	exec := NewRegistryExecutor(reg, ExecutionPolicy{Enabled: true, Timeout: 100 * time.Millisecond})
+	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{Enabled: true, Timeout: 100 * time.Millisecond})
 
 	start := time.Now()
 	_, err := exec.Execute(context.Background(), "slow", nil)
@@ -102,7 +105,7 @@ func (t *blockingTool) Version() string { return "0.0.1" }
 
 func (t *blockingTool) Description() string { return "blocking tool" }
 
-func (t *blockingTool) ParameterSchema() string { return toolEmptyParameterSchema }
+func (t *blockingTool) ParameterSchema() string { return agent.EmptyParameterSchema }
 
 func (t *blockingTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	<-ctx.Done()

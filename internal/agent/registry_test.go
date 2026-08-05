@@ -1,19 +1,22 @@
-package agent
+package agent_test
 
 import (
 	"context"
 	"testing"
+
+	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/opspilot/opspilot/internal/agent/tools/system"
 )
 
 func TestRegistryRegisterFindList(t *testing.T) {
-	r := NewRegistry()
-	r.Register(NewUptimeTool())
+	r := agent.NewRegistry()
+	r.Register(system.NewUptimeTool())
 
-	tool, ok := r.Find(ToolSystemUptime)
+	tool, ok := r.Find(system.ToolSystemUptime)
 	if !ok {
 		t.Fatal("expected tool to be found")
 	}
-	if tool.Name() != ToolSystemUptime {
+	if tool.Name() != system.ToolSystemUptime {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
 
@@ -22,15 +25,15 @@ func TestRegistryRegisterFindList(t *testing.T) {
 	}
 
 	names := r.List()
-	if len(names) != 1 || names[0] != ToolSystemUptime {
+	if len(names) != 1 || names[0] != system.ToolSystemUptime {
 		t.Fatalf("unexpected list: %v", names)
 	}
 }
 
 func TestRegistryRegisterOverwrites(t *testing.T) {
-	r := NewRegistry()
-	r.Register(NewUptimeTool())
-	r.Register(&fakeTool{name: ToolSystemUptime})
+	r := agent.NewRegistry()
+	r.Register(system.NewUptimeTool())
+	r.Register(&fakeTool{name: system.ToolSystemUptime})
 	if len(r.List()) != 1 {
 		t.Fatalf("expected single registration, got: %v", r.List())
 	}
@@ -46,7 +49,7 @@ func (t *fakeTool) Version() string { return "0.0.1" }
 
 func (t *fakeTool) Description() string { return "fake tool" }
 
-func (t *fakeTool) ParameterSchema() string { return toolEmptyParameterSchema }
+func (t *fakeTool) ParameterSchema() string { return agent.EmptyParameterSchema }
 
 func (t *fakeTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
 	return []byte(`{"ok":true}`), nil

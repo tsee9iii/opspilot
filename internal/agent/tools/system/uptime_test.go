@@ -1,4 +1,4 @@
-package agent
+package system
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/opspilot/opspilot/internal/agent"
 )
 
 func TestUptimeToolName(t *testing.T) {
@@ -22,7 +24,7 @@ func TestUptimeToolExecute(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var res commandResult
+	var res agent.CommandResult
 	if err := json.Unmarshal(result, &res); err != nil {
 		t.Fatalf("decode result: %v", err)
 	}
@@ -35,12 +37,12 @@ func TestUptimeToolExecute(t *testing.T) {
 }
 
 func TestRunCommandCapturesStderrAndExitCode(t *testing.T) {
-	result, err := runCommand(context.Background(), "sh", "-c", "echo err >&2; exit 3")
+	result, err := agent.RunCommand(context.Background(), "sh", "-c", "echo err >&2; exit 3")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	var res commandResult
+	var res agent.CommandResult
 	if err := json.Unmarshal(result, &res); err != nil {
 		t.Fatalf("decode result: %v", err)
 	}
@@ -56,7 +58,7 @@ func TestRunCommandTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	_, err := runCommand(ctx, "sh", "-c", "sleep 5")
+	_, err := agent.RunCommand(ctx, "sh", "-c", "sleep 5")
 	if err == nil || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("expected timeout error, got: %v", err)
 	}

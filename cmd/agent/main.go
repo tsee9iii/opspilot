@@ -10,6 +10,8 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/opspilot/opspilot/internal/agent"
+	"github.com/opspilot/opspilot/internal/agent/tools/pm2"
+	"github.com/opspilot/opspilot/internal/agent/tools/system"
 	"github.com/opspilot/opspilot/pkg/config"
 	"github.com/opspilot/opspilot/pkg/logger"
 )
@@ -41,11 +43,14 @@ func main() {
 	}
 
 	registry := agent.NewRegistry()
-	registry.Register(agent.NewUptimeTool())
-	registry.Register(agent.NewMemoryTool())
-	registry.Register(agent.NewCPUTool())
-	registry.Register(agent.NewDiskTool())
-	registry.Register(agent.NewProcessesTool())
+	registry.Register(system.NewUptimeTool())
+	registry.Register(system.NewMemoryTool())
+	registry.Register(system.NewCPUTool())
+	registry.Register(system.NewDiskTool())
+	registry.Register(system.NewProcessesTool())
+	registry.Register(pm2.NewPM2ListTool())
+	registry.Register(pm2.NewPM2LogsTool())
+	registry.Register(pm2.NewPM2RestartTool())
 
 	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()), registry)
 
