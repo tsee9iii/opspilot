@@ -22,18 +22,30 @@ type Agents struct {
 	UpdatedAt     time.Time
 }
 
+type Capabilities struct {
+	ID          uuid.UUID
+	AgentID     uuid.UUID
+	ToolName    string
+	Version     string
+	Description string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type Commands struct {
-	ID         uuid.UUID
-	AgentID    uuid.UUID
-	ToolName   string
-	Payload    []byte
-	Status     string
-	Result     []byte
-	Error      pgtype.Text
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	LeasedAt   pgtype.Timestamptz
-	LeaseOwner pgtype.Text
+	ID          uuid.UUID
+	AgentID     uuid.UUID
+	ToolName    string
+	Payload     []byte
+	Status      string
+	Result      []byte
+	Error       pgtype.Text
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	LeasedAt    pgtype.Timestamptz
+	LeaseOwner  pgtype.Text
+	StartedAt   pgtype.Timestamptz
+	CompletedAt pgtype.Timestamptz
 }
 
 type RegistrationTokens struct {

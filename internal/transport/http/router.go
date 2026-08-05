@@ -6,7 +6,7 @@ package http
 
 import "net/http"
 
-func NewRouter(agents *AgentHandler, commands *CommandHandler) http.Handler {
+func NewRouter(agents *AgentHandler, commands *CommandHandler, capabilities *CapabilityHandler) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	mux.HandleFunc("POST /api/v1/agents/register", agents.Register)
@@ -16,6 +16,7 @@ func NewRouter(agents *AgentHandler, commands *CommandHandler) http.Handler {
 	mux.HandleFunc("POST /api/v1/commands/start", commands.Start)
 	mux.HandleFunc("POST /api/v1/commands/complete", commands.Complete)
 	mux.HandleFunc("POST /api/v1/commands/fail", commands.Fail)
+	mux.HandleFunc("POST /api/v1/capabilities", capabilities.Sync)
 	return mux
 }
 

@@ -19,6 +19,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/opspilot/opspilot/internal/application/agent"
+	appcapability "github.com/opspilot/opspilot/internal/application/capability"
 	appcommand "github.com/opspilot/opspilot/internal/application/command"
 	"github.com/opspilot/opspilot/internal/infrastructure/postgres"
 	"github.com/opspilot/opspilot/internal/infrastructure/security"
@@ -116,8 +117,11 @@ func (a *App) buildHandler() http.Handler {
 	createCommandUC := appcommand.NewCreateUseCase(commandRepo)
 	leaseCommandUC := appcommand.NewLeaseUseCase(commandRepo)
 	executionCommandUC := appcommand.NewExecutionUseCase(commandRepo)
+	capabilityRepo := postgres.NewCapabilityRepository(a.pool)
+	capabilityUC := appcapability.NewSyncUseCase(agentRepo, capabilityRepo, secretHasher)
 	return httpx.NewRouter(
 		httpx.NewAgentHandler(registerUC, heartbeatUC),
 		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC),
+		httpx.NewCapabilityHandler(capabilityUC),
 	)
 }

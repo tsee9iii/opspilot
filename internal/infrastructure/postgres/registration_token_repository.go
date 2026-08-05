@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	appagent "github.com/opspilot/opspilot/internal/application/agent"
 	"github.com/opspilot/opspilot/gen/postgresql"
+	appagent "github.com/opspilot/opspilot/internal/application/agent"
 	"github.com/opspilot/opspilot/internal/domain/registrationtoken"
 )
 

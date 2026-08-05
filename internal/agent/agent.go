@@ -21,14 +21,16 @@ type Agent struct {
 	log      *zap.Logger
 	http     *http.Client
 	executor Executor
+	registry *Registry
 }
 
-func New(cfg *Config, log *zap.Logger, executor Executor) *Agent {
+func New(cfg *Config, log *zap.Logger, executor Executor, registry *Registry) *Agent {
 	return &Agent{
 		cfg:      cfg,
 		log:      log,
 		http:     &http.Client{Timeout: registerTimeout},
 		executor: executor,
+		registry: registry,
 	}
 }
 
@@ -40,6 +42,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.log.Info("agent registered", zap.String("agent_id", a.cfg.AgentID))
 	} else {
 		a.log.Info("agent identity present", zap.String("agent_id", a.cfg.AgentID))
+	}
+
+	if err := a.registerCapabilities(ctx); err != nil {
+		a.log.Warn("capability registration failed", zap.Error(err))
+	} else {
+		a.log.Info("capabilities registered", zap.Int("count", len(a.registry.List())))
 	}
 
 	a.log.Info("agent heartbeat loop started", zap.Duration("interval", heartbeatInterval))

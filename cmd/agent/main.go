@@ -43,7 +43,7 @@ func main() {
 	registry := agent.NewRegistry()
 	registry.Register(agent.NewUptimeTool())
 
-	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()))
+	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()), registry)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

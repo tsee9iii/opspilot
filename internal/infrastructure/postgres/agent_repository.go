@@ -9,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/opspilot/opspilot/gen/postgresql"
 	appagent "github.com/opspilot/opspilot/internal/application/agent"
 	domainagent "github.com/opspilot/opspilot/internal/domain/agent"
-	"github.com/opspilot/opspilot/gen/postgresql"
 )
 
 var _ appagent.Repository = (*AgentRepository)(nil)

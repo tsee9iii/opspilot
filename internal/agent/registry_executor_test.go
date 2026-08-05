@@ -98,6 +98,10 @@ type blockingTool struct {
 
 func (t *blockingTool) Name() string { return t.name }
 
+func (t *blockingTool) Version() string { return "0.0.1" }
+
+func (t *blockingTool) Description() string { return "blocking tool" }
+
 func (t *blockingTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()

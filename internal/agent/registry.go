@@ -9,6 +9,8 @@ import (
 // Tool executes a named operation against a payload and returns a result.
 type Tool interface {
 	Name() string
+	Version() string
+	Description() string
 	Execute(ctx context.Context, payload []byte) ([]byte, error)
 }
 
