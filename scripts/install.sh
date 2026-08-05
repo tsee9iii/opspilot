@@ -23,6 +23,7 @@
 #   OPSPILOT_SERVICE_PATH   unit path          (default /etc/systemd/system/opspilot-agent.service)
 #   OPSPILOT_LOCAL_BIN      use a local binary file instead of downloading
 #   OPSPILOT_ALLOW_NON_ROOT set to 1 to skip the root check (testing only)
+#   OPSPILOT_DEBUG          set to 1 to print the normalized central URL
 
 set -euo pipefail
 
@@ -35,6 +36,28 @@ readonly SERVICE_NAME="opspilot-agent"
 
 log() { printf '[installer] %s\n' "$*"; }
 die() { printf '[installer] error: %s\n' "$*" >&2; exit 1; }
+debug() { [[ "${OPSPILOT_DEBUG:-0}" == "1" ]] && printf '[installer] %s\n' "$*" >&2 || true; }
+
+# normalize_in STRING OUTPUT -> strip leading/trailing whitespace and a trailing
+# CR/LF, storing the result in variable OUTPUT. Uses printf -v (no subshell), so
+# it is safe to call between reads of a shared stdin pipe.
+normalize_in() {
+  local s="$1" out="$2"
+  s="${s%$'\r'}"
+  s="${s%$'\n'}"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf -v "$out" '%s' "$s"
+}
+
+# normalize_url STRING OUTPUT -> as normalize_in plus strip trailing slashes.
+normalize_url() {
+  local s="$1" out="$2" n
+  normalize_in "$s" n
+  s="$n"
+  while [[ "$s" == */ ]]; do s="${s%/}"; done
+  printf -v "$out" '%s' "$s"
+}
 
 # yaml_get_top KEY -> value of a top-level `key: value` line (quotes stripped).
 yaml_get_top() {
@@ -176,7 +199,9 @@ fi
 
 if [[ "$REGISTER" == true ]]; then
   existing_central="$(yaml_get_top central_url)"
+  normalize_url "$existing_central" existing_central
   existing_token="$(yaml_get_top registration_token)"
+  normalize_in "$existing_token" existing_token
   existing_hostname="$(yaml_get_nested server hostname)"
   existing_environment="$(yaml_get_nested server environment)"
   existing_version="$(yaml_get_top version)"
@@ -192,8 +217,10 @@ if [[ "$REGISTER" == true ]]; then
     fi
     IFS= read -r v
     [[ -n "$v" ]] || v="$existing_central"
+    normalize_url "$v" v
     if [[ -n "$v" ]]; then CENTRAL_URL="$v"; else printf '[installer] Central URL cannot be empty\n' >&2; fi
   done
+  debug "central URL: ${CENTRAL_URL}"
 
   # --- prompt for Registration Token ------------------------------------------
   REGISTRATION_TOKEN=""
@@ -204,6 +231,7 @@ if [[ "$REGISTER" == true ]]; then
     printf 'Registration Token: '
     IFS= read -r v
     [[ -n "$v" ]] || v="$token_default"
+    normalize_in "$v" v
     if [[ -n "$v" ]]; then REGISTRATION_TOKEN="$v"; else printf '[installer] Registration Token cannot be empty\n' >&2; fi
   done
 
@@ -220,7 +248,8 @@ if [[ "$REGISTER" == true ]]; then
 
   # --- register with Central ----------------------------------------------------
   register_url="${CENTRAL_URL%/}/api/v1/agents/register"
-  log "registering with ${CENTRAL_URL}"
+  log "registering agent"
+  debug "registering with ${CENTRAL_URL}"
   req_file "$(printf '{"registration_token":"%s","secret":"%s","version":"%s","server":{"hostname":"%s","environment":"%s"}}' \
     "$(json_quote "$REGISTRATION_TOKEN")" "$(json_quote "$SECRET")" "$(json_quote "$VERSION")" \
     "$(json_quote "$HOSTNAME")" "$(json_quote "$ENVIRONMENT")")" "$workdir/reg-body.json"

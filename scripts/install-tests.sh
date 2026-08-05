@@ -202,7 +202,7 @@ SYSTEMCTL_LOG="$SANDBOX/logs/systemctl.log"
 USERADD_LOG="$SANDBOX/logs/useradd.log"
 
 run_install() {
-  # run_install INPUT -> runs install.sh feeding INPUT to its prompts.
+  # run_install INPUT -> runs install.sh feeding INPUT (printf %b escapes) to its prompts.
   local input="$1"
   : > "$SYSTEMCTL_LOG"; : > "$USERADD_LOG"
   PATH="$SANDBOX/stubs:$PATH" \
@@ -213,7 +213,7 @@ run_install() {
     OPSPILOT_ALLOW_NON_ROOT=1 \
     SYSTEMCTL_LOG="$SYSTEMCTL_LOG" \
     USERADD_LOG="$USERADD_LOG" \
-    bash "$INSTALL_SH" <<< "$input"
+    bash "$INSTALL_SH" < <(printf '%b\n' "$input")
 }
 
 PASS=0; FAIL=0
@@ -384,6 +384,51 @@ calls_after_first="$(grep -c 'register token=' "$CENTRAL_LOG" || true)"
 run_install "n" >/dev/null 2>&1
 calls_after_second="$(grep -c 'register token=' "$CENTRAL_LOG" || true)"
 check "no duplicate registration on rerun" "$calls_after_second" "$calls_after_first"
+
+echo "== 11. input normalization (end-to-end) =="
+start_mock "ops_rt_norm_cr,ops_rt_norm_sp,ops_rt_norm_ls,ops_rt_norm_slash,ops_rt_norm_tok"
+config_url() { sed -n 's/^central_url: //p' "$CONFIG"; }
+config_tok() { sed -n 's/^registration_token: //p' "$CONFIG"; }
+
+rm -rf "$CONFIG_DIR"; mkdir -p "$CONFIG_DIR"
+run_install "${MOCK_URL}\r\nops_rt_norm_cr" >/dev/null 2>&1
+check "trailing CR: url normalized" "$(config_url)" "$MOCK_URL"
+
+rm -rf "$CONFIG_DIR"; mkdir -p "$CONFIG_DIR"
+run_install "${MOCK_URL}   \nops_rt_norm_sp" >/dev/null 2>&1
+check "trailing spaces: url normalized" "$(config_url)" "$MOCK_URL"
+
+rm -rf "$CONFIG_DIR"; mkdir -p "$CONFIG_DIR"
+run_install "   ${MOCK_URL}\nops_rt_norm_ls" >/dev/null 2>&1
+check "leading spaces: url normalized" "$(config_url)" "$MOCK_URL"
+
+rm -rf "$CONFIG_DIR"; mkdir -p "$CONFIG_DIR"
+run_install "${MOCK_URL}/\nops_rt_norm_slash" >/dev/null 2>&1
+check "trailing slash: url normalized" "$(config_url)" "$MOCK_URL"
+
+rm -rf "$CONFIG_DIR"; mkdir -p "$CONFIG_DIR"
+run_install "${MOCK_URL}\n  ops_rt_norm_tok  \n" >/dev/null 2>&1
+check "token spaces: token normalized" "$(config_tok)" "ops_rt_norm_tok"
+
+echo "== 12. normalize unit (extracted from install.sh) =="
+normalize_unit() {
+  local expr
+  expr="$(sed -n '/^normalize_in()/,/^}/p;/^normalize_url()/,/^}/p' "$INSTALL_SH")"
+  bash -c "
+    $expr
+    set -e
+    normalize_in \$'url\r' o; [[ \"\$o\" == 'url' ]]
+    normalize_in \$'url\n' o; [[ \"\$o\" == 'url' ]]
+    normalize_in ' url ' o; [[ \"\$o\" == 'url' ]]
+    normalize_in \$'  url\t \t' o; [[ \"\$o\" == 'url' ]]
+    normalize_url 'http://host:9090/' o; [[ \"\$o\" == 'http://host:9090' ]]
+    normalize_url \$'http://host:9090/\r' o; [[ \"\$o\" == 'http://host:9090' ]]
+    normalize_url ' http://host:9090/ ' o; [[ \"\$o\" == 'http://host:9090' ]]
+    echo UNIT_OK
+  "
+}
+out="$(normalize_unit)"
+check "normalize unit (CR/LF/spaces/slash)" "$out" "UNIT_OK"
 
 echo
 echo "results: ${PASS} passed, ${FAIL} failed"

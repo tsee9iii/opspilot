@@ -718,12 +718,18 @@ docs/                   architecture, implementation, roadmap, adr/
   to `{central_url}/api/v1/agents/register`. The body carries
   `registration_token`, a client-generated `secret` (`openssl rand -hex 32`,
   fallback `od /dev/urandom`), `version`, and `server.{hostname,environment}`.
-  Success is HTTP **201** returning `{"agent_id": ...}` (no secret in the
+  Success   is HTTP **201** returning `{"agent_id": ...}` (no secret in the
   response); the `agent_id` is parsed from it and a missing id aborts. Non-201
   responses abort with the `message` extracted from the JSON error body. The
   Central URL and registration token are prompted; an existing `central_url` is
   the prompt default, and on a re-register a fresh token is required (the old
   token is consumed by the previous registration).
+- **Input normalization**: every prompted value is normalized before use —
+  leading/trailing whitespace and a trailing CR/LF are stripped; for the Central
+  URL, trailing slashes are also removed (`http://host:9090/` →
+  `http://host:9090`). Normalization uses `printf -v` in the current shell (no
+  subshell) so it is safe between reads of a shared stdin pipe. The normalized
+  Central URL is only printed when `OPSPILOT_DEBUG=1`.
 - **Config persistence**: when `agent.yaml` does not exist, a full 0600 template
   is written; when it exists, only installer-owned fields are replaced
   (`central_url`, `registration_token`, `secret`, `agent_id`, `version`) while
@@ -757,7 +763,9 @@ docs/                   architecture, implementation, roadmap, adr/
   registration, response parsing, invalid/unreachable/invalid-URL failures,
   config preservation, service start/stop behavior, re-registration prompts, and
   secret/token not being printed.
-- **Tests**: `scripts/install-tests.sh` passes 44 assertions; `scripts/install.sh`
+- **Tests**: `scripts/install-tests.sh` passes 50 assertions (including input
+  normalization for trailing CR/LF, spaces, and a trailing slash, plus a
+  normalize unit test); `scripts/install.sh`
   is clean under `shellcheck` and `bash -n`; the Go suite
   (`go build`, `go vet`, `go test`, plus `GOOS=linux` build/vet) is green.
 
