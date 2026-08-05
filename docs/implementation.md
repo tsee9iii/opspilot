@@ -873,11 +873,19 @@ docs/                   architecture, implementation, roadmap, adr/
 - **Verification before upload**: each built binary is checked to be
   executable (`test -x`) and non-empty (`test -s`); a missing or invalid
   binary fails the job and therefore the workflow.
-- **Upload**: uses the built-in `GITHUB_TOKEN` (`contents: write` — the
-  minimum permission) with `gh release upload <tag> <asset> --clobber`, so the
-  existing release for the pushed tag is reused, no duplicate release is
-  created, re-runs overwrite existing assets, and no source archives are
-  uploaded.
+- **Two jobs**:
+  - **`build`** (matrix `agent`/`central` × `amd64`/`arm64`): builds and
+    verifies each binary exactly as above, then uploads it to the workflow run
+    with `actions/upload-artifact@v4` (`if-no-files-found: error`). Nothing is
+    uploaded to GitHub Releases from this job.
+  - **`release`** (`needs: build`): downloads all artifacts with
+    `actions/download-artifact@v4` (`merge-multiple`), then
+    `softprops/action-gh-release@v2` creates the Release for the pushed tag if
+    it does not exist (or reuses the existing one) and uploads all four
+    binaries in a single step. `overwrite: true` replaces assets on a re-run,
+    so the workflow works whether or not the Release already exists.
+- **Permissions**: uses the built-in `GITHUB_TOKEN` (`contents: write` — the
+  minimum permission) in both jobs; no custom token and no source archives.
 - **No application code**: the pipeline does not modify the Agent, Central,
   Tool Registry, Workflow Engine, installers, database, or HTTP API.
 - **Verification**: `GOOS=linux GOARCH=amd64|arm64 go build ./cmd/agent` and
