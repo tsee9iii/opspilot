@@ -58,6 +58,7 @@ Architectural decisions are documented in:
 | Central installer (Phase 1)                      | `scripts/install-central.sh`    | —                        | Implemented     |
 | GitHub release pipeline                          | `.github/workflows/release.yml` | tag push `v*`            | Implemented     |
 | Embedded migration framework                     | `internal/migration/` + `cmd/migrate` | auto-migrate on central startup | Implemented     |
+| Config loading (YAML + env precedence)           | `pkg/config` (`/etc/opspilot/central.yaml`, `OPSPILOT_CONFIG`) | —            | Implemented     |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -455,10 +456,14 @@ token)` hex, never plaintext. Registration consumes the row atomically; a
 
 ## 9. Configuration
 
-Central — env vars (`pkg/config`), with defaults:
+Central — `pkg/config`, resolved with precedence: built-in defaults → YAML file →
+environment variables (highest). The YAML file is `/etc/opspilot/central.yaml`
+(override with `OPSPILOT_CONFIG`); a missing file is not an error, and environment
+variables always override YAML (see §23).
 
-`OPSPILOT_ENV`, `OPSPILOT_HTTP_HOST`/`PORT`, `OPSPILOT_DB_HOST`/`PORT`/`USER`/
-`PASSWORD`/`NAME`/`SSLMODE`, `OPSPILOT_LOG_LEVEL`, `OPSPILOT_AUTH_SERVER_SECRET`
+Environment variables: `OPSPILOT_ENV`, `OPSPILOT_HTTP_HOST`/`PORT`,
+`OPSPILOT_DB_HOST`/`PORT`/`USER`/`PASSWORD`/`NAME`/`SSLMODE`,
+`OPSPILOT_LOG_LEVEL`, `OPSPILOT_AUTH_SERVER_SECRET`
 (default `dev-only-secret-change-me`).
 
 Agent — YAML (`configs/agent.example.yaml`):
@@ -944,3 +949,67 @@ docs/                   architecture, implementation, roadmap, adr/
   previous one succeeds only if order is respected), embedded loading (10 files,
   sorted, non-empty), and `status`. `gofmt`, `go build`, `go vet`, `go test ./...`,
   `GOOS=linux go build ./...`, and `GOOS=linux go vet ./...` all pass.
+
+## 23. Config loading (Phase 2)
+
+**Problem**: `pkg/config.Load()` previously read environment variables only, so
+the `/etc/opspilot/central.yaml` written by `scripts/install-central.sh` (see
+§20) was never used.
+
+**Precedence** (highest wins) — `internal` to `pkg/config/config.go`:
+
+1. Built-in defaults.
+2. YAML file — `/etc/opspilot/central.yaml`, overridden by the
+   `OPSPILOT_CONFIG` environment variable.
+3. Environment variables — always override YAML, with the same
+   set-but-empty-is-unset semantics as before.
+
+A missing YAML file is **not** an error: startup continues with defaults plus
+environment variables (fully backwards compatible with env-only deployments).
+An unreadable or invalid YAML file **is** an error.
+
+**YAML format** — exactly the shape produced by `install-central.sh`, plus the
+full option set supported by the spec:
+
+```yaml
+server:
+  host: 0.0.0.0
+  port: 8080
+database:
+  host: localhost
+  port: 5432
+  database: opspilot
+  username: opspilot
+  password: opspilot
+  sslmode: disable
+logger:
+  level: info
+auth:
+  server_secret: change-me
+```
+
+Field mapping: `database.database` → `Config.Database.Name`
+(`applyFile`), `database.username` → `Config.Database.User`,
+`server.host` → `Config.HTTP.Host`, etc. Empty YAML values (the installer
+template ships an empty `database:` block) fall back to the built-in
+defaults, so the installer-generated file loads unchanged.
+
+**Implementation**: no new dependency — `gopkg.in/yaml.v3` was already a direct
+dependency. `Load()` builds `defaults()`, runs `loadFile` (returns `nil`
+on `os.IsNotExist`, otherwise parses into a struct-tagged `fileConfig` via
+`yaml.Unmarshal`, error on parse failure), applies non-zero file fields via
+`applyFile`, then `applyEnv` overlays the environment last. The shared
+`pkg/config` package is used by both `cmd/central` (via `bootstrap`) and
+`cmd/agent` (for `OPSPILOT_ENV` / `OPSPILOT_LOG_LEVEL`); the agent reads its
+own per-agent YAML separately (§9), so agent behavior is unchanged.
+
+**Tests** (`pkg/config/config_test.go`, isolated via `clearEnv` + `t.Setenv` +
+`t.TempDir`): defaults only, YAML only, environment only, YAML+environment
+override (env wins), missing config file (no error), invalid YAML (error),
+partial YAML (provided values honored, rest default), installer-generated YAML
+(empty `database` block falls back to defaults), and `OPSPILOT_CONFIG` override.
+`gofmt`, `go build ./...`, `go vet ./...`, `go test ./...`, `GOOS=linux
+go build ./...`, and `GOOS=linux go vet ./...` all pass. End-to-end verified:
+Central started reading port, database, and server secret from a YAML file
+(`OPSPILOT_CONFIG`), migrated the schema, and served `/healthz` on the YAML-
+configured port.
