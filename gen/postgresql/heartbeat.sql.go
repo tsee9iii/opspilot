@@ -37,11 +37,15 @@ func (q *Queries) GetAgentByID(ctx context.Context, id uuid.UUID) (Agents, error
 const updateAgentLastHeartbeat = `-- name: UpdateAgentLastHeartbeat :exec
 UPDATE agents
 SET last_heartbeat = now(),
-    updated_at = now()
+    updated_at = now(),
+    status = CASE WHEN status = 'offline' THEN 'online' ELSE status END
 WHERE id = $1
+  AND status IN ('offline', 'online')
 `
 
-// Record the agent's latest heartbeat.
+// Record the agent's latest heartbeat and mark an offline agent back online.
+// Only active agents (offline/online) are touched: an unregistered agent or any
+// future terminal status is never resurrected by a heartbeat.
 func (q *Queries) UpdateAgentLastHeartbeat(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, updateAgentLastHeartbeat, id)
 	return err
