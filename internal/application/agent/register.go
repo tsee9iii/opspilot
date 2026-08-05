@@ -23,12 +23,9 @@ type RegisterAgentResponse struct {
 // case. Its concrete implementation lives in the infrastructure layer and is
 // injected at composition root.
 type Repository interface {
-	// UpsertServer finds a server by hostname and environment or creates it,
-	// returning the server identifier.
-	UpsertServer(ctx context.Context, hostname string, environment string) (serverID string, err error)
-
-	// CreateAgent persists a registered agent bound to a server.
-	CreateAgent(ctx context.Context, agentID string, secret string, version string, serverID string) error
+	// RegisterAgent persists a registered agent and its server as a single
+	// unit of work. The implementation owns all persistence details.
+	RegisterAgent(ctx context.Context, req RegisterAgentRequest) (RegisterAgentResponse, error)
 }
 
 type RegisterUseCase struct {
