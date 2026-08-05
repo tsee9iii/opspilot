@@ -62,6 +62,7 @@ func main() {
 	registry.Register(systemctl.NewSystemCtlRestartTool())
 	registry.Register(journal.NewJournalLogsTool())
 	registry.Register(git.NewGitStatusTool())
+	registry.Register(git.NewGitCurrentCommitTool())
 
 	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()), registry)
 

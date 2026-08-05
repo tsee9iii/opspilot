@@ -45,6 +45,7 @@ Architectural decisions are documented in:
 | `systemctl.restart` tool | — | `systemctl restart` | Implemented |
 | `journal.logs` tool | — | `journalctl -u <svc> -n <n>` | Implemented |
 | `git.status` tool | — | `git status --porcelain=v1 --branch` | Implemented |
+| `git.current_commit` tool | — | `git log -1 --pretty=format:%H%n%h%n%an%n%ae%n%ad%n%s` | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -177,9 +178,10 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
   - `internal/agent/tools/systemctl/` — `systemctl.*` tools: `status.go`,
     `restart.go`.
   - `internal/agent/tools/journal/` — `journal.*` tools: `journal.go`.
-  - `internal/agent/tools/git/` — `git.*` tools: `status.go`, plus `common.go`
-    with reusable Git helpers (`ensureGit`, `ensureRepository`, `runGit`,
-    `parseBranchHeader`, `parsePorcelainStatus`) for future Git tools.
+  - `internal/agent/tools/git/` — `git.*` tools: `status.go`, `commit.go`,
+    plus `common.go` with reusable Git helpers (`ensureGit`,
+    `ensureRepository`, `runGit`, `parseBranchHeader`,
+    `parsePorcelainStatus`) for future Git tools.
 - Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs`,
   `docker.ps`, `docker.logs`, `systemctl.status`, `journal.logs` — advertise
   `confirmation_level = none`; write tools `pm2.restart`, `docker.restart`,
@@ -281,13 +283,25 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     path). Missing `git`, a non-existent repository, a path outside a work
     tree, a non-zero `git status` exit, or malformed porcelain output all
     surface as errors. No raw git output is ever returned.
+  - `git.current_commit` — verifies `git` is installed (`git --version`),
+    verifies the repository path exists and is inside a Git work tree
+    (`git -C <repository> rev-parse --is-inside-work-tree`), then runs
+    `git -C <repository> log -1 --date=iso-strict --pretty=format:%H%n%h%n%an%n%ae%n%ad%n%s`
+    and returns
+    `{"repository","commit","short_commit","author_name","author_email",
+    "author_date","subject"}`. The full hash, short hash, ISO-8601 author
+    date, and subject are preserved as reported by Git; the subject is the
+    commit subject line only. The payload is validated against its parameter
+    schema (`repository` required). Missing `git`, a non-existent repository,
+    a path outside a work tree, a repository with no commits, a non-zero
+    `git log` exit, or malformed output (not exactly six fields) all surface
+    as errors. No raw git output is ever returned.
 - Availability per tool (`Availability(ctx)`): the `system.*` tools report
   `unsupported platform` on non-Linux hosts and are available on Linux; the
   `pm2.*`/`docker.*`/`systemctl.*` tools and `journal.logs` report
   `<binary> is not installed` / `<binary> is not runnable` based on a
-  `--version` check; `git.status` reports `git is not installed` /
-  `git is not runnable` based on `git --version` (see §14).
-- `internal/agent/tool.go` — shared helpers used by the tool packages:
+  `--version` check; the `git.*` tools report `git is not installed` /
+  `git is not runnable` based on `git --version` (see §14).- `internal/agent/tool.go` — shared helpers used by the tool packages:
   `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
   `{"type":"object","properties":{}}` schema constant), `RunCommand`
   (context-aware `exec.CommandContext` wrapper; context expiry surfaces as a
@@ -431,8 +445,8 @@ docs/                   architecture, implementation, roadmap, adr/
   (`internal/agent/tools/system/availability.go`) — available on Linux,
   `unsupported platform` elsewhere; `pm2.*`, `docker.*`, `systemctl.*`, and
   `journal.logs` check `pm2`, `docker`, `systemctl`, and `journalctl`
-  respectively; `git.status` checks `git`. The repository path is validated at
-  execution time (`ensureRepository`), not in `Availability`, because
+  respectively; the `git.*` tools check `git`. The repository path is validated
+  at execution time (`ensureRepository`), not in `Availability`, because
   availability carries no payload.
 - The checks are intentionally cheap (a single `--version` probe); they run
   once per capability sync and never during execution, so the command
