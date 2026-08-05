@@ -50,6 +50,9 @@ Architectural decisions are documented in:
 | `git.pull` tool | — | `git pull --ff-only` | Implemented |
 | `http.check` tool | — | HTTP GET health check | Implemented |
 | Project Profiles (foundation) | — | config + discovery of `projects:` profiles | Implemented |
+| Workflow engine (foundation) | — | step state machine, simulated execution | Implemented |
+| Deploy workflow (execution) | — | git.pull → restart → optional http.check via RegistryExecutor | Implemented |
+| Diagnose workflow (execution) | — | system.* + platform + logs + optional http.check, continue-on-failure | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -360,6 +363,11 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
   only, no execution): `profile.go` (`Project`, `ToolReference`),
   `config.go` (YAML shape of the `projects:` section), `loader.go`
   (`Loader`, `New`, `Projects`, `FindProject`). See §15.
+- `internal/agent/workflow/` — the workflow engine: `workflow.go`
+  (`Workflow`, `Step`, `NewWorkflow`, `BuildDeployWorkflow`,
+  `BuildDiagnoseWorkflow`), `result.go`
+  (`Result`, `StepResult`, `StepStatus`), `executor.go` (`Executor`).
+  See §16.
 - `internal/agent/tool.go` — shared helpers used by the tool packages:
   `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
   `{"type":"object","properties":{}}` schema constant), `RunCommand`
@@ -465,6 +473,9 @@ docs/                   architecture, implementation, roadmap, adr/
 - Command results query / history API; capability and agent listing endpoints
 - Audit and alert tables/domains
 - Additional tools (Docker SDK); tool sandboxing; tool version matrix
+- The `deploy.project` (and `diagnose.project`/`restart.project`) tool that
+  wires the Project Profiles and workflow engine (§15, §16) into the registry
+  and command pipeline
 - Token rotation; metrics and observability beyond zap logs
 - Migration tooling (`cmd/cli`, `migrate-*` Makefile targets)
 
@@ -569,3 +580,61 @@ docs/                   architecture, implementation, roadmap, adr/
   tool registry, and the agent runtime (Tool interface, Registry, capability
   registration, command lifecycle, JSON Schema validation, confirmation
   framework) is unchanged.
+
+## 16. Workflow engine
+
+- **Purpose**: the execution framework used by project operations (deploy,
+  restart, diagnose, rollback). It executes real tools through the normal
+  command execution pipeline.
+- **Package** (`internal/agent/workflow/`): `workflow.go` defines `Workflow`
+  (`Name`, `Steps []Step`) and `Step` (`Name`, `Tool project.ToolReference`)
+  — each step references an existing project tool reference. `NewWorkflow`
+  builds a workflow. `result.go` defines `Result{Workflow, Project,
+  StartedAt, FinishedAt, Steps, Success}` and `StepResult{Name, Tool,
+  Parameters, Status, StartedAt, FinishedAt, Result, Error}`, with `StepStatus`
+  values `pending`, `running`, `completed`, `failed`, `skipped`.
+  `executor.go` defines `Executor`.
+- **Executor**: `NewExecutor(agent.Executor)` (optionally chained with
+  `StopOnFailure(bool)`) and
+  `Execute(ctx, p project.Project, wf Workflow) Result`. Each step is executed
+  by calling the injected agent executor with the step's tool name and raw
+  parameters — in production this is the `RegistryExecutor`, so every step
+  goes through the exact pipeline as a leased command: registry lookup →
+  execution-policy gate → JSON Schema payload validation → tool `Execute`
+  (§5). The registry is never bypassed. A step transitions
+  `pending → running → completed`; on success the tool's raw result bytes are
+  stored in `StepResult.Result`.
+- **Failure rules**:
+  - **Stop-on-failure** (default, deploy): a failing step is marked `failed`
+    with `Error`, the workflow stops immediately, every remaining step is
+    marked `skipped`, and `Result.Success` is `false`. Execution never
+    continues after a failure.
+  - **Continue-on-failure** (`StopOnFailure(false)`, diagnose): every step
+    executes regardless of failure. A failed step records `failed` + `Error`
+    and the workflow moves on; steps are never skipped. The workflow succeeds
+    (`Success = true`) when at least one step completed successfully.
+- **Deploy workflow** (`BuildDeployWorkflow(p)`): builds the dynamic deployment
+  workflow for a project — step 1 is always `git.pull` with
+  `{"repository":"<project.repository>"}`; step 2 is `project.Tools["restart"]`
+  copied exactly as stored (parameters unmodified); step 3 is `http.check`
+  with `{"url":"<health_url>"}`, included only when the project has a
+  `health_url`. The workflow is named `deploy`. The `deploy.project` tool that
+  wires this into the registry is **not** implemented (§12).
+- **Diagnose workflow** (`BuildDiagnoseWorkflow(p)`): builds the dynamic
+  diagnostic workflow for a project — it gathers operational data only (no AI
+  analysis). Always `system.cpu`, `system.memory`, `system.disk`,
+  `system.processes` (all with `{}`), then exactly one platform step chosen by
+  the project's restart tool: `docker.ps` (`{}`) when
+  `project.Tools["restart"].Tool == "docker.restart"`, `pm2.list` (`{}`) when
+  `pm2.restart`, or `systemctl.status` reusing the restart tool's exact
+  parameters when `systemctl.restart`. Then the project's logs tool
+  (`project.Tools["logs"]`) exactly as stored when a logs tool exists, and
+  finally `http.check` with `{"url":"<health_url>"}` when a `health_url` is
+  configured. The workflow is named `diagnose` and is executed with
+  `StopOnFailure(false)`. The `diagnose.project` tool that wires this into the
+  registry is **not** implemented (§12).
+- **Project integration**: the executor operates on a `project.Project`
+  produced by the Project Loader (§15); it never reads YAML directly.
+- **Confirmation**: no approval handling is implemented — a workflow assumes
+  it is already approved. The existing confirmation framework (§13) is reused
+  exactly as-is.
