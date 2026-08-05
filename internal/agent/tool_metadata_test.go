@@ -8,6 +8,7 @@ import (
 	"github.com/opspilot/opspilot/internal/agent"
 	"github.com/opspilot/opspilot/internal/agent/tools/docker"
 	"github.com/opspilot/opspilot/internal/agent/tools/git"
+	httptool "github.com/opspilot/opspilot/internal/agent/tools/http"
 	"github.com/opspilot/opspilot/internal/agent/tools/journal"
 	"github.com/opspilot/opspilot/internal/agent/tools/pm2"
 	"github.com/opspilot/opspilot/internal/agent/tools/system"
@@ -34,6 +35,7 @@ func TestToolMetadata(t *testing.T) {
 		git.NewGitCurrentCommitTool(),
 		git.NewGitBranchTool(),
 		git.NewGitPullTool(),
+		httptool.NewHTTPCheckTool(),
 	}
 	for _, tool := range tools {
 		if tool.Name() == "" || tool.Version() == "" || tool.Description() == "" {
@@ -65,6 +67,7 @@ func TestConfirmationLevels(t *testing.T) {
 		git.NewGitStatusTool(),
 		git.NewGitCurrentCommitTool(),
 		git.NewGitBranchTool(),
+		httptool.NewHTTPCheckTool(),
 	}
 	for _, tool := range readOnly {
 		if tool.ConfirmationLevel() != agent.ConfirmationNone {
@@ -105,6 +108,7 @@ func TestToolAvailabilityContract(t *testing.T) {
 		git.NewGitCurrentCommitTool(),
 		git.NewGitBranchTool(),
 		git.NewGitPullTool(),
+		httptool.NewHTTPCheckTool(),
 	}
 	for _, tool := range tools {
 		ok, reason := tool.Availability(context.Background())

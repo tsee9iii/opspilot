@@ -12,6 +12,7 @@ import (
 	"github.com/opspilot/opspilot/internal/agent"
 	"github.com/opspilot/opspilot/internal/agent/tools/docker"
 	"github.com/opspilot/opspilot/internal/agent/tools/git"
+	httptool "github.com/opspilot/opspilot/internal/agent/tools/http"
 	"github.com/opspilot/opspilot/internal/agent/tools/journal"
 	"github.com/opspilot/opspilot/internal/agent/tools/pm2"
 	"github.com/opspilot/opspilot/internal/agent/tools/system"
@@ -65,6 +66,7 @@ func main() {
 	registry.Register(git.NewGitCurrentCommitTool())
 	registry.Register(git.NewGitBranchTool())
 	registry.Register(git.NewGitPullTool())
+	registry.Register(httptool.NewHTTPCheckTool())
 
 	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()), registry)
 

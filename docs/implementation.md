@@ -48,6 +48,7 @@ Architectural decisions are documented in:
 | `git.current_commit` tool | — | `git log -1 --pretty=format:%H%n%h%n%an%n%ae%n%ad%n%s` | Implemented |
 | `git.branch` tool | — | `git branch --show-current` + `git rev-parse @{u}` | Implemented |
 | `git.pull` tool | — | `git pull --ff-only` | Implemented |
+| `http.check` tool | — | HTTP GET health check | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -185,6 +186,9 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     (`ensureGit`, `ensureRepository`, `runGit`/`runGitRaw`,
     `parseRepositoryRequest`, `parseBranchName`, `currentBranch`,
     `parseBranchHeader`, `parsePorcelainStatus`) for future Git tools.
+  - `internal/agent/tools/http/` — `http.*` tools: `check.go`, plus
+    `common.go` with reusable HTTP helpers (`buildClient`, `performRequest`,
+    `validateURL`, `classifyRequestError`) for future HTTP tools.
 - Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs`,
   `docker.ps`, `docker.logs`, `systemctl.status`, `journal.logs` — advertise
   `confirmation_level = none`; write tools `pm2.restart`, `docker.restart`,
@@ -332,12 +336,25 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     (`merge required`), any other non-zero `git pull` exit, or unrecognized
     output (malformed) all surface as errors. No raw git output is ever
     returned.
+  - `http.check` — performs a read-only HTTP health check using Go's
+    `net/http` (no binary dependency, so it is always available). The payload
+    is validated against its parameter schema: `url` is required
+    (`http://` or `https://` only), `expected_status` defaults to 200
+    (100..599) and `timeout_seconds` defaults to 10 (1..60). It sends a
+    single `GET` with the given timeout, **never follows redirects**, and
+    returns `{"url","reachable","status_code","expected_status","healthy",
+    "duration_ms"}` where `healthy = status_code == expected_status` and
+    `duration_ms` is always reported. The response body and headers are never
+    returned. An invalid or non-http(s) URL, a timeout, a connection refused,
+    a DNS lookup failure, or a TLS failure all surface as clear errors; the
+    request itself failing is the only way `reachable` would be false.
 - Availability per tool (`Availability(ctx)`): the `system.*` tools report
   `unsupported platform` on non-Linux hosts and are available on Linux; the
   `pm2.*`/`docker.*`/`systemctl.*` tools and `journal.logs` report
   `<binary> is not installed` / `<binary> is not runnable` based on a
   `--version` check; the `git.*` tools report `git is not installed` /
-  `git is not runnable` based on `git --version` (see §14).
+  `git is not runnable` based on `git --version`; `http.check` is always
+  available (see §14).
 - `internal/agent/tool.go` — shared helpers used by the tool packages:
   `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
   `{"type":"object","properties":{}}` schema constant), `RunCommand`
@@ -482,7 +499,8 @@ docs/                   architecture, implementation, roadmap, adr/
   (`internal/agent/tools/system/availability.go`) — available on Linux,
   `unsupported platform` elsewhere; `pm2.*`, `docker.*`, `systemctl.*`, and
   `journal.logs` check `pm2`, `docker`, `systemctl`, and `journalctl`
-  respectively; the `git.*` tools check `git`. The repository path is validated
+  respectively; the `git.*` tools check `git`; `http.check` has no binary
+  dependency and is always available. The repository path is validated
   at execution time (`ensureRepository`), not in `Availability`, because
   availability carries no payload.
 - The checks are intentionally cheap (a single `--version` probe); they run
