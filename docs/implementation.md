@@ -56,6 +56,7 @@ Architectural decisions are documented in:
 | Diagnose workflow (execution) | — | system.* + platform + logs + optional http.check, continue-on-failure | Implemented |
 | Agent installer (Phase 1)                        | —                               | `scripts/install.sh`     | Implemented     |
 | Central installer (Phase 1)                      | `scripts/install-central.sh`    | —                        | Implemented     |
+| GitHub release pipeline                          | `.github/workflows/release.yml` | tag push `v*`            | Implemented     |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -852,3 +853,33 @@ docs/                   architecture, implementation, roadmap, adr/
   (platform detection, download + ELF check, binary/user/config/service install,
   enable + start), config preservation, health-check success and warning paths,
   and the PostgreSQL check were exercised in an `ubuntu:24.04` container.
+
+## 21. GitHub release pipeline
+
+- **Purpose**: automatically build and publish release binaries whenever a Git
+  tag is pushed. These binaries are the artifacts consumed by the installers
+  (`scripts/install.sh`, §17, and `scripts/install-central.sh`, §20) via their
+  `/releases/latest/download/<asset>` URLs.
+- **Trigger** (`.github/workflows/release.yml`): runs only on
+  `push: tags: - "v*"`.
+- **Targets**: exactly `cmd/agent` and `cmd/central`, for
+  `linux-amd64` and `linux-arm64`.
+- **Build**: `CGO_ENABLED=0`, `GOOS=linux`, `GOARCH=amd64|arm64`,
+  `-trimpath`, `-ldflags="-s -w"`; the Go toolchain version comes from the
+  repository's `go.mod` (`go-version-file`).
+- **Produced assets** (four, published per tag):
+  `opspilot-agent-linux-amd64`, `opspilot-agent-linux-arm64`,
+  `opspilot-central-linux-amd64`, `opspilot-central-linux-arm64`.
+- **Verification before upload**: each built binary is checked to be
+  executable (`test -x`) and non-empty (`test -s`); a missing or invalid
+  binary fails the job and therefore the workflow.
+- **Upload**: uses the built-in `GITHUB_TOKEN` (`contents: write` — the
+  minimum permission) with `gh release upload <tag> <asset> --clobber`, so the
+  existing release for the pushed tag is reused, no duplicate release is
+  created, re-runs overwrite existing assets, and no source archives are
+  uploaded.
+- **No application code**: the pipeline does not modify the Agent, Central,
+  Tool Registry, Workflow Engine, installers, database, or HTTP API.
+- **Verification**: `GOOS=linux GOARCH=amd64|arm64 go build ./cmd/agent` and
+  `./cmd/central` all pass locally, producing statically linked, stripped ELF
+  binaries whose names match the installer asset expectations.

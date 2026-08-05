@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and upload (${{ matrix.asset }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: agent
+            goarch: amd64
+            asset: opspilot-agent-linux-amd64
+          - target: agent
+            goarch: arm64
+            asset: opspilot-agent-linux-arm64
+          - target: central
+            goarch: amd64
+            asset: opspilot-central-linux-amd64
+          - target: central
+            goarch: arm64
+            asset: opspilot-central-linux-arm64
+
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+      GOARCH: ${{ matrix.goarch }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o "dist/${{ matrix.asset }}" "./cmd/${{ matrix.target }}"
+
+      - name: Verify binary
+        run: |
+          test -x "dist/${{ matrix.asset }}"
+          test -s "dist/${{ matrix.asset }}"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" "dist/${{ matrix.asset }}" --clobber
