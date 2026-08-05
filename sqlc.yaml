@@ -18,4 +18,6 @@ sql:
               type: "time.Time"
           - db_type: "uuid"
             go_type:
-              type: "github.com/google/uuid.UUID"
+              import: "github.com/google/uuid"
+              package: "uuid"
+              type: "UUID"
