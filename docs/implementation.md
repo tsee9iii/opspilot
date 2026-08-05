@@ -49,6 +49,7 @@ Architectural decisions are documented in:
 | `git.branch` tool | — | `git branch --show-current` + `git rev-parse @{u}` | Implemented |
 | `git.pull` tool | — | `git pull --ff-only` | Implemented |
 | `http.check` tool | — | HTTP GET health check | Implemented |
+| Project Profiles (foundation) | — | config + discovery of `projects:` profiles | Implemented |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
 | WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
 | Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
@@ -353,8 +354,12 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
   `pm2.*`/`docker.*`/`systemctl.*` tools and `journal.logs` report
   `<binary> is not installed` / `<binary> is not runnable` based on a
   `--version` check; the `git.*` tools report `git is not installed` /
-  `git is not runnable` based on `git --version`; `http.check` is always
+  `git is not runnable` based on `git --version`;   `http.check` is always
   available (see §14).
+- `internal/agent/project/` — Project Profiles (configuration and discovery
+  only, no execution): `profile.go` (`Project`, `ToolReference`),
+  `config.go` (YAML shape of the `projects:` section), `loader.go`
+  (`Loader`, `New`, `Projects`, `FindProject`). See §15.
 - `internal/agent/tool.go` — shared helpers used by the tool packages:
   `CommandResult{Stdout,Stderr,ExitCode}`, `EmptyParameterSchema` (the
   `{"type":"object","properties":{}}` schema constant), `RunCommand`
@@ -411,7 +416,8 @@ Central — env vars (`pkg/config`), with defaults:
 Agent — YAML (`configs/agent.example.yaml`):
 `central_url`, `registration_token`, `secret`, `version`,
 `server{hostname,environment}`, `agent_id`, `poll_interval`,
-`execution_policy{enabled,timeout,allowed_commands,denied_commands,working_directory}`.
+`execution_policy{enabled,timeout,allowed_commands,denied_commands,working_directory}`,
+and the optional `projects` section (see §15).
 
 ## 10. Project structure
 
@@ -511,3 +517,55 @@ docs/                   architecture, implementation, roadmap, adr/
   capability payload; central persists it (see §6). Unavailable tools remain
   registered and leaseable — availability is advisory metadata for the
   planner, not an execution gate.
+
+## 15. Project Profiles
+
+- **Purpose**: the configuration layer describing deployable projects on an
+  agent. This feature is configuration and discovery only — no workflow, no
+  tool execution, no deploy/restart/diagnose implementation. Future features
+  (`deploy.project`, `diagnose.project`, `restart.project`) will consume the
+  profiles.
+- **Configuration**: an optional `projects` section in the agent YAML (see
+  §9). Each entry has `name`, `repository` (absolute path), optional
+  `health_url`, and a `tools` map. A tool reference names a registered tool
+  via the `tool` key; every other key in the entry is a tool parameter, kept
+  as arbitrary JSON. Example:
+
+  ```yaml
+  projects:
+    - name: backend
+      repository: /srv/backend
+      health_url: http://localhost:3000/health
+      tools:
+        restart:
+          tool: docker.restart
+          container: backend
+        logs:
+          tool: docker.logs
+          container: backend
+  ```
+
+- **Package** (`internal/agent/project/`): `profile.go` defines `Project`
+  (`Name`, `Repository`, `HealthURL *string`, `Tools map[string]ToolReference`)
+  and `ToolReference` (`Tool`, `Parameters json.RawMessage`). `config.go`
+  defines the YAML shape (`Config`, `ToolConfig`); the tool parameters use a
+  yaml `,inline` map so they round-trip through the agent config's `Save`.
+  `loader.go` provides `New(cfgs) (*Loader, error)`, `Projects() []Project`
+  (copy, configuration order), and `FindProject(name) (Project, bool)`.
+- **Loading**: profiles load together with the existing agent configuration.
+  `agent.LoadConfig` parses the `projects:` section into `[]project.Config`,
+  builds the loader via `project.New`, and fails config loading on invalid
+  profiles. `agent.Config` exposes `Projects()` and `FindProject(name)`
+  (delegating to the loader; nil-safe when the section is absent or the
+  config was constructed directly).
+- **Validation**: unique project names (`duplicate project name: <name>`);
+  absolute repository path (`filepath.IsAbs`); valid health URL when provided
+  (`http`/`https` with a host); the `restart` tool reference exists; the
+  `logs` tool reference exists; each tool reference names a tool. Tool
+  **parameter schemas are not validated** here — that remains the existing
+  JSON Schema validation framework's responsibility, and the registered tools
+  are not consulted during loading.
+- **Non-execution**: loading a profile never runs a tool, never consults the
+  tool registry, and the agent runtime (Tool interface, Registry, capability
+  registration, command lifecycle, JSON Schema validation, confirmation
+  framework) is unchanged.

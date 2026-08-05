@@ -8,10 +8,14 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/opspilot/opspilot/internal/agent/project"
 )
 
 type Config struct {
 	path string `yaml:"-"`
+	// profiles is the loaded project loader, built during LoadConfig.
+	profiles *project.Loader `yaml:"-"`
 
 	CentralURL        string                `yaml:"central_url"`
 	RegistrationToken string                `yaml:"registration_token"`
@@ -21,6 +25,7 @@ type Config struct {
 	AgentID           string                `yaml:"agent_id"`
 	PollInterval      int                   `yaml:"poll_interval"`
 	ExecutionPolicy   ExecutionPolicyConfig `yaml:"execution_policy"`
+	ProjectConfigs    []project.Config      `yaml:"projects"`
 }
 
 type ExecutionPolicyConfig struct {
@@ -48,6 +53,12 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	cfg.path = path
 
+	profiles, err := project.New(cfg.ProjectConfigs)
+	if err != nil {
+		return nil, fmt.Errorf("agent config: %w", err)
+	}
+	cfg.profiles = profiles
+
 	return &cfg, nil
 }
 
@@ -61,6 +72,23 @@ func (c *Config) Save() error {
 		return fmt.Errorf("agent config: write %s: %w", c.path, err)
 	}
 	return nil
+}
+
+// Projects returns the loaded project profiles, or nil when the config has no
+// `projects` section. The returned slice is a copy in configuration order.
+func (c *Config) Projects() []project.Project {
+	if c.profiles == nil {
+		return nil
+	}
+	return c.profiles.Projects()
+}
+
+// FindProject returns the project profile with the given name.
+func (c *Config) FindProject(name string) (project.Project, bool) {
+	if c.profiles == nil {
+		return project.Project{}, false
+	}
+	return c.profiles.FindProject(name)
 }
 
 func (c *Config) ValidateRegistration() error {

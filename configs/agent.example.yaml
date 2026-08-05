@@ -13,3 +13,19 @@ execution_policy:
   allowed_commands: []
   denied_commands: []
   working_directory: ""
+
+# Optional project profiles (configuration and discovery only — no tool is
+# executed from here). Each project needs a unique name, an absolute repository
+# path, and "restart" and "logs" tool references; health_url is optional.
+# projects:
+#   - name: backend
+#     repository: /srv/backend
+#     health_url: http://localhost:3000/health
+#     tools:
+#       restart:
+#         tool: docker.restart
+#         container: backend
+#       logs:
+#         tool: docker.logs
+#         container: backend
+
