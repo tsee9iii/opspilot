@@ -54,7 +54,7 @@ Architectural decisions are documented in:
 | Workflow engine (foundation) | — | step state machine, simulated execution | Implemented |
 | Deploy workflow (execution) | — | git.pull → restart → optional http.check via RegistryExecutor | Implemented |
 | Diagnose workflow (execution) | — | system.* + platform + logs + optional http.check, continue-on-failure | Implemented |
-| Agent installer (Phase 1)                        | —                               | `scripts/install.sh`     | Implemented     |
+| Agent installer (Phase 2, auto-register)          | —                               | `scripts/install.sh`     | Implemented     |
 | Central installer (Phase 1)                      | `scripts/install-central.sh`    | —                        | Implemented     |
 | GitHub release pipeline                          | `.github/workflows/release.yml` | tag push `v*`            | Implemented     |
 | Embedded migration framework                     | `internal/migration/` + `cmd/migrate` | auto-migrate on central startup | Implemented     |
@@ -687,48 +687,79 @@ docs/                   architecture, implementation, roadmap, adr/
   it is already approved. The existing confirmation framework (§13) is reused
   exactly as-is.
 
-## 17. Agent installer (Phase 1)
+## 17. Agent installer (Phase 2: automatic registration)
 
 - **Purpose**: a production installer (`scripts/install.sh`) that downloads the
-  latest released `opspilot-agent` binary from GitHub Releases and installs it
-  as a systemd service on a Linux host.
-- **Scope**: the installer does **not** register the agent, does **not** contact
-  the Central server, and does **not** clone the repository. No Go code is
-  involved; the config template is created for the operator to fill in, after
-  which the service must be restarted.
+  latest released `opspilot-agent` binary from GitHub Releases, registers the
+  agent with a Central server, persists the returned credentials into
+  `/etc/opspilot/agent.yaml`, installs it as a systemd service, and verifies the
+  install by polling the heartbeat endpoint. The installer is idempotent and
+  only mutates installer-owned config fields.
 - **Platform detection**: Linux only; `uname -m` maps `x86_64 → amd64` and
   `aarch64 → arm64`. Anything else fails with
-  `unsupported OS` / `unsupported architecture`.
+  `unsupported OS` / `unsupported architecture`. Root is required unless
+  `OPSPILOT_ALLOW_NON_ROOT=1` (test only).
 - **Release assets** (published on GitHub Releases per architecture):
   `opspilot-agent-linux-amd64`, `opspilot-agent-linux-arm64`. The asset is
-  fetched from `https://github.com/opspilot/opspilot/releases/latest/download/<asset>`
-  via `curl -fsSL --retry 3`. A downloaded file that is empty or not a Linux
-  ELF binary (checked via the `\x7fELF` magic) aborts the install.
+  fetched via `curl -fsSL --retry 3`. A downloaded file that is empty or not a
+  Linux ELF binary (checked via the `\x7fELF` magic) aborts the install.
+  `OPSPILOT_LOCAL_BIN` may point at an existing binary instead of downloading
+  (used by tests).
 - **Binary install**: installed to `/usr/local/bin/opspilot-agent` with mode
   `0755` via `install -m 0755`.
-- **Config**: `/etc/opspilot/` is created if missing; a minimal
-  `/etc/opspilot/agent.yaml` template is written (mode `0600`) **only** when it
-  does not already exist — an existing, operator-edited config is never
-  overwritten.
+- **Registration decision**: if `agent.yaml` contains both a non-empty
+  `agent_id` and `secret`, the agent is considered already registered and the
+  operator is asked `Re-register this agent? (y/N)` (default No). No → skip
+  registration and preserve `agent_id`/`secret`/`registration_token`, continuing
+  with binary + service update (exit 0). Yes → re-register, consuming a fresh
+  token and replacing the credentials.
+- **Registration protocol**: builds the request body in a 0600 temp file (so
+  secrets never appear in `ps`/argv) and POSTs it with curl `--data-binary @file`
+  to `{central_url}/api/v1/agents/register`. The body carries
+  `registration_token`, a client-generated `secret` (`openssl rand -hex 32`,
+  fallback `od /dev/urandom`), `version`, and `server.{hostname,environment}`.
+  Success is HTTP **201** returning `{"agent_id": ...}` (no secret in the
+  response); the `agent_id` is parsed from it and a missing id aborts. Non-201
+  responses abort with the `message` extracted from the JSON error body. The
+  Central URL and registration token are prompted; an existing `central_url` is
+  the prompt default, and on a re-register a fresh token is required (the old
+  token is consumed by the previous registration).
+- **Config persistence**: when `agent.yaml` does not exist, a full 0600 template
+  is written; when it exists, only installer-owned fields are replaced
+  (`central_url`, `registration_token`, `secret`, `agent_id`, `version`) while
+  operator-owned `server.hostname`/`server.environment` and extra sections (e.g.
+  `projects`, `poll_interval`) are preserved. All rewrites keep mode `0600`.
+- **Secrets hygiene**: the generated `secret` and the registration token are
+  never printed or logged; request/response bodies live only in a temp dir that
+  is removed via `trap ... EXIT`.
 - **System user**: the `opspilot` system user is created only when missing
   (`useradd --system --no-create-home --user-group --shell /bin/false
   opspilot`), guarded by `id opspilot`. The config directory and file are
-  `chown`ed to `opspilot:opspilot`.
+  `chown`ed to `opspilot:opspilot` (best-effort, `|| true`).
 - **systemd service**: `/etc/systemd/system/opspilot-agent.service` with
   `After=network-online.target` + `Wants=network-online.target`,
   `ExecStart=/usr/local/bin/opspilot-agent`, `Restart=always`, `RestartSec=5`,
-  `User=opspilot`, `Group=opspilot`, `WantedBy=multi-user.target`. The service
-  is started via `systemctl daemon-reload; enable; start`.
-- **Idempotency**: safe to re-run — re-running does not re-create the user and
-  does not overwrite an existing config; the binary and unit file are simply
-  reinstalled and the service re-enabled.
-- **Completion output**: always prints the exact `Installation completed.` /
-  `Next step:` block directing the operator to edit `/etc/opspilot/agent.yaml`
-  and run `sudo systemctl restart opspilot-agent`.
-- **Verification**: `shellcheck` and `bash -n` clean; the full install flow
-  (platform detection, download + ELF check, binary/user/config/service install,
-  enable + start) and the idempotency behavior were verified in an
-  `ubuntu:24.04` container.
+  `User=opspilot`, `Group=opspilot`, `WorkingDirectory=/etc/opspilot`,
+  `WantedBy=multi-user.target`. The service is started via
+  `systemctl daemon-reload; enable; start`.
+- **Verification**: after `start`, the installer polls the heartbeat endpoint
+  (`{central_url}/api/v1/agents/heartbeat` with `agent_id` + `secret`) up to 5
+  times; on HTTP 200 it logs `agent heartbeat verified`. On persistent failure
+  it prints `systemctl status` + `journalctl` and aborts on the register path
+  (warn-only on the skip-registration path).
+- **Idempotency**: safe to re-run — the binary and unit file are reinstalled and
+  the service re-enabled, and an already-registered agent is never re-registered
+  unless the operator answers Yes.
+- **Testability**: installer path overrides `OPSPILOT_CONFIG_DIR`,
+  `OPSPILOT_BIN_PATH`, `OPSPILOT_SERVICE_PATH`, `OPSPILOT_LOCAL_BIN`,
+  `OPSPILOT_ALLOW_NON_ROOT`. `scripts/install-tests.sh` exercises the installer
+  against a mock Central + stubbed system tools, covering successful
+  registration, response parsing, invalid/unreachable/invalid-URL failures,
+  config preservation, service start/stop behavior, re-registration prompts, and
+  secret/token not being printed.
+- **Tests**: `scripts/install-tests.sh` passes 44 assertions; `scripts/install.sh`
+  is clean under `shellcheck` and `bash -n`; the Go suite
+  (`go build`, `go vet`, `go test`, plus `GOOS=linux` build/vet) is green.
 
 ## 18. Agent lifecycle: unregister
 

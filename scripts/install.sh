@@ -1,31 +1,102 @@
 #!/usr/bin/env bash
 #
-# OpsPilot Agent installer — Phase 1
+# OpsPilot Agent installer — Phase 2 (automatic registration)
 #
-# Downloads the latest released opspilot-agent binary from GitHub Releases and
-# installs it as a systemd service on a Linux (amd64/arm64) host.
+# Downloads the latest released opspilot-agent binary from GitHub Releases,
+# registers the agent with a Central server using the existing registration
+# endpoint, persists the returned credentials into /etc/opspilot/agent.yaml,
+# installs it as a systemd service, and verifies by polling the heartbeat
+# endpoint.
 #
-# This installer does NOT register the agent and does NOT contact the Central
-# server. The config template is created for the operator to fill in, after
-# which the service must be restarted.
+# The installation is idempotent: an already-registered agent is never
+# overwritten unless the operator explicitly re-registers.
 #
 # Expected release assets per architecture (published on GitHub Releases):
 #   opspilot-agent-linux-amd64
 #   opspilot-agent-linux-arm64
 #
 # Usage: sudo scripts/install.sh
+#
+# Test overrides (documented, keep production defaults when unset):
+#   OPSPILOT_CONFIG_DIR     config directory   (default /etc/opspilot)
+#   OPSPILOT_BIN_PATH       binary path        (default /usr/local/bin/opspilot-agent)
+#   OPSPILOT_SERVICE_PATH   unit path          (default /etc/systemd/system/opspilot-agent.service)
+#   OPSPILOT_LOCAL_BIN      use a local binary file instead of downloading
+#   OPSPILOT_ALLOW_NON_ROOT set to 1 to skip the root check (testing only)
 
 set -euo pipefail
 
 readonly REPO="tsee9iii/opspilot"
-readonly BIN_PATH="/usr/local/bin/opspilot-agent"
-readonly SERVICE_PATH="/etc/systemd/system/opspilot-agent.service"
-readonly CONFIG_DIR="/etc/opspilot"
-readonly CONFIG_PATH="/etc/opspilot/agent.yaml"
+readonly CONFIG_DIR="${OPSPILOT_CONFIG_DIR:-/etc/opspilot}"
+readonly CONFIG_PATH="${CONFIG_DIR}/agent.yaml"
+readonly BIN_PATH="${OPSPILOT_BIN_PATH:-/usr/local/bin/opspilot-agent}"
+readonly SERVICE_PATH="${OPSPILOT_SERVICE_PATH:-/etc/systemd/system/opspilot-agent.service}"
 readonly SERVICE_NAME="opspilot-agent"
 
 log() { printf '[installer] %s\n' "$*"; }
 die() { printf '[installer] error: %s\n' "$*" >&2; exit 1; }
+
+# yaml_get_top KEY -> value of a top-level `key: value` line (quotes stripped).
+yaml_get_top() {
+  [[ -f "$CONFIG_PATH" ]] && sed -n "s/^${1}[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\"]*\)\"\{0,1\}[[:space:]]*$/\1/p" "$CONFIG_PATH" | head -n 1 || true
+}
+
+# yaml_get_nested PARENT KEY -> value of a `  key: value` line under PARENT.
+yaml_get_nested() {
+  [[ -f "$CONFIG_PATH" ]] || return 0
+  awk -v p="${1}:" -v k="${2}" '
+    $0 ~ "^" p { inb = 1; next }
+    inb && $0 !~ /^[[:space:]]/ { exit }
+    inb && $0 ~ "^[[:space:]]*" k "[[:space:]]*:" {
+      sub("^[[:space:]]*" k "[[:space:]]*:[[:space:]]*", "")
+      gsub(/^"|"$/, "")
+      print
+      exit
+    }
+  ' "$CONFIG_PATH"
+}
+
+# sed_escape STRING -> escapes sed replacement-special characters (& \ and |).
+sed_escape() { printf '%s' "$1" | sed 's/[&|\\]/\\&/g'; }
+
+# yaml_set_top KEY VALUE -> update the top-level line or append it.
+yaml_set_top() {
+  local key="$1" value="$2" tmp="$workdir/config.new"
+  if grep -qE "^${key}:" "$CONFIG_PATH"; then
+    sed -E "s|^(${key}:).*|\\1 $(sed_escape "$value")|" "$CONFIG_PATH" > "$tmp"
+  else
+    { cat "$CONFIG_PATH"; printf '%s: %s\n' "$key" "$value"; } > "$tmp"
+  fi
+  mv -f "$tmp" "$CONFIG_PATH"
+  chmod 0600 "$CONFIG_PATH"
+}
+
+# yaml_set_nested PARENT KEY VALUE -> update the nested line or insert it under PARENT.
+yaml_set_nested() {
+  local parent="$1" key="$2" value="$3" tmp="$workdir/config.new"
+  if grep -qE "^  ${key}:" "$CONFIG_PATH"; then
+    sed -E "s|^(  ${key}:).*|\\1 $(sed_escape "$value")|" "$CONFIG_PATH" > "$tmp"
+  elif grep -qE "^${parent}:" "$CONFIG_PATH"; then
+    sed -E "s|^(${parent}:.*)$|\\1\n  ${key}: $(sed_escape "$value")|" "$CONFIG_PATH" > "$tmp"
+  else
+    { cat "$CONFIG_PATH"; printf '\n%s:\n  %s: %s\n' "$parent" "$key" "$value"; } > "$tmp"
+  fi
+  mv -f "$tmp" "$CONFIG_PATH"
+  chmod 0600 "$CONFIG_PATH"
+}
+
+# json_quote STRING -> a JSON string literal (escapes backslash and quote).
+json_quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+# http_code URL BODYFILE OUT -> curl exit code via a var, prints HTTP status to
+# $workdir/status. Uses --data-binary @file so secrets never appear in argv.
+http_code() {
+  curl -sS -o "$1" -w '%{http_code}' -X POST "$2" \
+    -H 'Content-Type: application/json' --data-binary "@$3"
+}
+
+# echo body to file without exposing it in the command line.
+req_file() { printf '%s' "$1" > "$2"; chmod 0600 "$2"; }
 
 # --- platform detection -------------------------------------------------------
 
@@ -43,19 +114,26 @@ readonly ARCH
 
 log "platform: linux/${ARCH}"
 
-[[ "$(id -u)" -eq 0 ]] || die "run as root (sudo)"
+if [[ "${OPSPILOT_ALLOW_NON_ROOT:-0}" != "1" ]]; then
+  [[ "$(id -u)" -eq 0 ]] || die "run as root (sudo)"
+fi
 
 command -v curl >/dev/null 2>&1 || die "curl is required"
 command -v systemctl >/dev/null 2>&1 || die "systemd (systemctl) is required"
 
-# --- download the latest release binary --------------------------------------
+# --- obtain the release binary ------------------------------------------------
 
-asset_url="https://github.com/${REPO}/releases/latest/download/opspilot-agent-linux-${ARCH}"
 workdir="$(mktemp -d)"
 trap 'rm -rf "$workdir"' EXIT
 
-log "downloading ${asset_url}"
-curl -fsSL --retry 3 -o "${workdir}/opspilot-agent" "$asset_url"
+if [[ -n "${OPSPILOT_LOCAL_BIN:-}" ]]; then
+  log "using local binary ${OPSPILOT_LOCAL_BIN}"
+  cp "$OPSPILOT_LOCAL_BIN" "${workdir}/opspilot-agent"
+else
+  asset_url="https://github.com/${REPO}/releases/latest/download/opspilot-agent-linux-${ARCH}"
+  log "downloading ${asset_url}"
+  curl -fsSL --retry 3 -o "${workdir}/opspilot-agent" "$asset_url"
+fi
 
 [[ -s "${workdir}/opspilot-agent" ]] || die "downloaded binary is empty"
 if [[ "$(head -c 4 "${workdir}/opspilot-agent")" != $'\x7fELF' ]]; then
@@ -68,32 +146,127 @@ chmod 0755 "${workdir}/opspilot-agent"
 install -m 0755 "${workdir}/opspilot-agent" "$BIN_PATH"
 log "installed ${BIN_PATH}"
 
-# --- config directory ----------------------------------------------------------
+# --- config directory ---------------------------------------------------------
 
 mkdir -p "$CONFIG_DIR"
 
-# --- opspilot system user -------------------------------------------------------
+# --- opspilot system user -----------------------------------------------------
 
 if ! id "opspilot" >/dev/null 2>&1; then
   log "creating system user opspilot"
   useradd --system --no-create-home --user-group --shell /bin/false opspilot
 fi
 
-# --- config template (created only when missing) ------------------------------
+# --- registration decision ----------------------------------------------------
 
-if [[ ! -f "$CONFIG_PATH" ]]; then
-  log "creating ${CONFIG_PATH}"
-  cat > "$CONFIG_PATH" <<'EOF'
-central_url:
-registration_token:
-secret:
-server:
-  hostname:
-  environment:
-EOF
-  chmod 0600 "$CONFIG_PATH"
+REGISTER=true
+if [[ -f "$CONFIG_PATH" ]]; then
+  existing_agent_id="$(yaml_get_top agent_id)"
+  existing_secret="$(yaml_get_top secret)"
+  if [[ -n "$existing_agent_id" && -n "$existing_secret" ]]; then
+    printf 'Agent is already registered (agent_id=%s).\n' "$existing_agent_id"
+    printf 'Re-register this agent? (y/N): '
+    IFS= read -r ans || ans="n"
+    case "${ans:-n}" in
+      y|Y|yes|Yes|YES) REGISTER=true ;;
+      *) REGISTER=false ;;
+    esac
+  fi
 fi
-chown opspilot:opspilot "$CONFIG_DIR" "$CONFIG_PATH"
+
+if [[ "$REGISTER" == true ]]; then
+  existing_central="$(yaml_get_top central_url)"
+  existing_token="$(yaml_get_top registration_token)"
+  existing_hostname="$(yaml_get_nested server hostname)"
+  existing_environment="$(yaml_get_nested server environment)"
+  existing_version="$(yaml_get_top version)"
+  already_registered="$(yaml_get_top agent_id)"
+
+  # --- prompt for Central URL -------------------------------------------------
+  CENTRAL_URL=""
+  while [[ -z "$CENTRAL_URL" ]]; do
+    if [[ -n "$existing_central" ]]; then
+      printf 'Central URL [%s]: ' "$existing_central"
+    else
+      printf 'Central URL: '
+    fi
+    IFS= read -r v
+    [[ -n "$v" ]] || v="$existing_central"
+    if [[ -n "$v" ]]; then CENTRAL_URL="$v"; else printf '[installer] Central URL cannot be empty\n' >&2; fi
+  done
+
+  # --- prompt for Registration Token ------------------------------------------
+  REGISTRATION_TOKEN=""
+  # On a re-register the previous token is consumed/rotated, so never reuse it.
+  token_default=""
+  [[ -z "$already_registered" ]] && token_default="$existing_token"
+  while [[ -z "$REGISTRATION_TOKEN" ]]; do
+    printf 'Registration Token: '
+    IFS= read -r v
+    [[ -n "$v" ]] || v="$token_default"
+    if [[ -n "$v" ]]; then REGISTRATION_TOKEN="$v"; else printf '[installer] Registration Token cannot be empty\n' >&2; fi
+  done
+
+  HOSTNAME="${existing_hostname:-$(hostname)}"
+  ENVIRONMENT="${existing_environment:-production}"
+  VERSION="${existing_version:-0.1.0}"
+
+  # --- generate a cryptographically secure secret ------------------------------
+  if command -v openssl >/dev/null 2>&1; then
+    SECRET="$(openssl rand -hex 32)"
+  else
+    SECRET="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+  fi
+
+  # --- register with Central ----------------------------------------------------
+  register_url="${CENTRAL_URL%/}/api/v1/agents/register"
+  log "registering with ${CENTRAL_URL}"
+  req_file "$(printf '{"registration_token":"%s","secret":"%s","version":"%s","server":{"hostname":"%s","environment":"%s"}}' \
+    "$(json_quote "$REGISTRATION_TOKEN")" "$(json_quote "$SECRET")" "$(json_quote "$VERSION")" \
+    "$(json_quote "$HOSTNAME")" "$(json_quote "$ENVIRONMENT")")" "$workdir/reg-body.json"
+
+  code="$(http_code "$workdir/reg.json" "$register_url" "$workdir/reg-body.json" || true)"
+  if [[ "$code" != "201" ]]; then
+    errmsg="$(sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$workdir/reg.json" | head -n 1 || true)"
+    die "registration failed (HTTP ${code}): ${errmsg:-cannot reach central or invalid response}"
+  fi
+
+  AGENT_ID="$(sed -n 's/.*"agent_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$workdir/reg.json" | head -n 1)"
+  [[ -n "$AGENT_ID" ]] || die "registration response did not include agent_id"
+
+  # --- persist config (installer-owned fields only) ------------------------------
+  if [[ ! -f "$CONFIG_PATH" ]]; then
+    log "creating ${CONFIG_PATH}"
+    req_file "central_url: ${CENTRAL_URL}
+registration_token: ${REGISTRATION_TOKEN}
+secret: ${SECRET}
+version: ${VERSION}
+server:
+  hostname: ${HOSTNAME}
+  environment: ${ENVIRONMENT}
+agent_id: ${AGENT_ID}
+poll_interval: 5
+" "$CONFIG_PATH"
+    chmod 0600 "$CONFIG_PATH"
+  else
+    yaml_set_top central_url "$CENTRAL_URL"
+    yaml_set_top registration_token "$REGISTRATION_TOKEN"
+    yaml_set_top secret "$SECRET"
+    yaml_set_top agent_id "$AGENT_ID"
+    yaml_set_top version "$VERSION"
+    [[ -n "$(yaml_get_nested server hostname)" ]] || yaml_set_nested server hostname "$HOSTNAME"
+    [[ -n "$(yaml_get_nested server environment)" ]] || yaml_set_nested server environment "$ENVIRONMENT"
+  fi
+  chown opspilot:opspilot "$CONFIG_DIR" "$CONFIG_PATH" || true
+  log "agent registered with id ${AGENT_ID}"
+else
+  log "agent already registered; skipping registration (agent_id and secret preserved)"
+  CENTRAL_URL="$(yaml_get_top central_url)"
+  AGENT_ID="$(yaml_get_top agent_id)"
+  SECRET="$(yaml_get_top secret)"
+fi
+
+chown opspilot:opspilot "$CONFIG_DIR" "$CONFIG_PATH" || true
 
 # --- systemd service ------------------------------------------------------------
 
@@ -122,20 +295,36 @@ systemctl enable "$SERVICE_NAME"
 systemctl start "$SERVICE_NAME"
 log "opspilot-agent service enabled and started"
 
-if systemctl is-active --quiet "$SERVICE_NAME"; then
-  log "opspilot-agent is active"
+# --- verification ---------------------------------------------------------------
+
+if [[ -n "${CENTRAL_URL:-}" && -n "${AGENT_ID:-}" && -n "${SECRET:-}" ]]; then
+  hb_url="${CENTRAL_URL%/}/api/v1/agents/heartbeat"
+  req_file "$(printf '{"agent_id":"%s","secret":"%s"}' "$(json_quote "$AGENT_ID")" "$(json_quote "$SECRET")")" "$workdir/hb-body.json"
+  healthy=0
+  for _ in 1 2 3 4 5; do
+    hb_code="$(http_code "$workdir/hb.json" "$hb_url" "$workdir/hb-body.json" || true)"
+    if [[ "$hb_code" == "200" ]]; then healthy=1; break; fi
+    sleep 1
+  done
+  if [[ "$healthy" == "1" ]]; then
+    log "agent heartbeat verified"
+  else
+    echo "---- systemctl status opspilot-agent ----" >&2
+    systemctl status "$SERVICE_NAME" --no-pager 2>&1 || true
+    echo "---- journalctl -u opspilot-agent ----" >&2
+    journalctl -u "$SERVICE_NAME" -n 50 --no-pager 2>&1 || true
+    if [[ "$REGISTER" == true ]]; then
+      die "agent did not become healthy after install; see status above"
+    else
+      log "warning: agent did not confirm heartbeat; see status above (existing agent left as-is)"
+    fi
+  fi
 else
-  log "opspilot-agent is enabled; it will stay active once /etc/opspilot/agent.yaml is configured"
+  log "skipping heartbeat verification (no central_url/agent_id in config)"
 fi
 
 cat <<'EOF'
 
 Installation completed.
-
-Next step:
-1. Edit /etc/opspilot/agent.yaml
-
-2. Restart:
-
-sudo systemctl restart opspilot-agent
+Agent successfully registered.
 EOF
