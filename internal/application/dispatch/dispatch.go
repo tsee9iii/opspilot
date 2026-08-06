@@ -22,6 +22,7 @@ const (
 	WorkflowDiagnoseTool = "workflow.diagnose"
 	WorkflowDeployTool   = "workflow.deploy"
 	FileReadTool         = "file.read"
+	FilesystemListTool   = "filesystem.list"
 )
 
 const (

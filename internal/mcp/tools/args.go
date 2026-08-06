@@ -75,6 +75,23 @@ func optionalInt(args map[string]any, key string, def int) (int, error) {
 
 const maxInt = int(^uint(0) >> 1)
 
+// optionalBool returns the boolean argument for key, or false when absent.
+func optionalBool(args map[string]any, key string) (bool, error) {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return false, nil
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return false, &mcp.ToolError{
+			Code:       "invalid_args",
+			Message:    fmt.Sprintf("%s must be a boolean", key),
+			Suggestion: "Provide a boolean value for " + key,
+		}
+	}
+	return b, nil
+}
+
 // requireUUID returns the UUID argument for key.
 func requireUUID(args map[string]any, key string) (uuid.UUID, error) {
 	s, err := requireString(args, key)

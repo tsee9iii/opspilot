@@ -8,11 +8,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/tsee9iii/opspilot/internal/agent"
 	"github.com/tsee9iii/opspilot/internal/agent/project"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/fsutil"
 )
 
 const (
@@ -52,11 +52,11 @@ type fileReadResult struct {
 // or a symlink) are rejected, as are directories, special files, files larger
 // than 1 MB, and binary files.
 type FileReadTool struct {
-	loader *project.Loader
+	resolver *fsutil.Resolver
 }
 
 func NewFileReadTool(loader *project.Loader) *FileReadTool {
-	return &FileReadTool{loader: loader}
+	return &FileReadTool{resolver: fsutil.NewResolver(loader)}
 }
 
 func (t *FileReadTool) Name() string {
@@ -89,22 +89,22 @@ func (t *FileReadTool) Execute(ctx context.Context, payload []byte) ([]byte, err
 		return nil, err
 	}
 
-	target, root, err := t.resolvePath(req.Path)
+	target, root, err := t.resolver.Resolve(req.Path)
 	if err != nil {
 		return nil, err
 	}
 
 	resolved, err := filepath.EvalSymlinks(target)
 	if err != nil {
-		return nil, statError(target, err)
+		return nil, fsutil.StatError(target, err, "file_not_found", "file")
 	}
-	if root != "" && !withinRoot(root, resolved) {
-		return nil, pathEscapeError(req.Path)
+	if root != "" && !fsutil.WithinRoot(root, resolved) {
+		return nil, fsutil.EscapeError(req.Path)
 	}
 
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return nil, statError(resolved, err)
+		return nil, fsutil.StatError(resolved, err, "file_not_found", "file")
 	}
 	switch {
 	case info.IsDir():
@@ -152,91 +152,6 @@ func (t *FileReadTool) Execute(ctx context.Context, payload []byte) ([]byte, err
 		Encoding:  toolReadEncoding,
 		Content:   string(data),
 	})
-}
-
-// resolvePath maps the requested path to an absolute target. Absolute paths
-// are used directly; relative paths resolve against the first configured
-// project root, and any path escaping that root is rejected.
-func (t *FileReadTool) resolvePath(p string) (target, root string, err error) {
-	if filepath.IsAbs(p) {
-		return filepath.Clean(p), "", nil
-	}
-	root, err = t.canonicalRoot()
-	if err != nil {
-		return "", "", err
-	}
-	target = filepath.Clean(filepath.Join(root, p))
-	if !withinRoot(root, target) {
-		return "", "", pathEscapeError(p)
-	}
-	return target, root, nil
-}
-
-// canonicalRoot returns the first configured project root with its symlinks
-// resolved, so containment checks compare against the same canonical base as
-// the resolved read target.
-func (t *FileReadTool) canonicalRoot() (string, error) {
-	root := t.projectRoot()
-	if root == "" {
-		return "", &agent.ToolError{
-			Code:       "invalid_path",
-			Message:    "relative paths require a configured project root",
-			Suggestion: "Add a project with an absolute path to the agent config, or pass an absolute path.",
-		}
-	}
-	resolved, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", statError(root, err)
-	}
-	return resolved, nil
-}
-
-func (t *FileReadTool) projectRoot() string {
-	if t.loader == nil {
-		return ""
-	}
-	projects := t.loader.Projects()
-	if len(projects) == 0 {
-		return ""
-	}
-	return projects[0].Repository
-}
-
-// withinRoot reports whether target is base itself or a descendant of base.
-func withinRoot(base, target string) bool {
-	rel, err := filepath.Rel(base, target)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
-}
-
-func pathEscapeError(p string) error {
-	return &agent.ToolError{
-		Code:       "invalid_path",
-		Message:    fmt.Sprintf("path escapes the project root: %s", p),
-		Suggestion: "Provide a path inside the project root, or an absolute path.",
-	}
-}
-
-// statError maps file system lookup failures to structured tool errors.
-func statError(path string, err error) error {
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return &agent.ToolError{
-			Code:       "file_not_found",
-			Message:    fmt.Sprintf("file does not exist: %s", path),
-			Suggestion: "Check that the path exists and is spelled correctly.",
-		}
-	case errors.Is(err, os.ErrPermission):
-		return &agent.ToolError{
-			Code:       "permission_denied",
-			Message:    fmt.Sprintf("permission denied accessing file: %s", path),
-			Suggestion: "Grant the agent read access to the file, or use a path the agent can read.",
-		}
-	default:
-		return fmt.Errorf("%s: stat %s: %w", ToolFileRead, path, err)
-	}
 }
 
 func parseReadRequest(payload []byte) (fileReadRequest, error) {

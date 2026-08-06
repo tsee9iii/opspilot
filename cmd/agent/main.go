@@ -15,6 +15,7 @@ import (
 	"github.com/tsee9iii/opspilot/internal/agent/tools/diagnose"
 	"github.com/tsee9iii/opspilot/internal/agent/tools/docker"
 	filetool "github.com/tsee9iii/opspilot/internal/agent/tools/file"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/filesystem"
 	"github.com/tsee9iii/opspilot/internal/agent/tools/git"
 	httptool "github.com/tsee9iii/opspilot/internal/agent/tools/http"
 	"github.com/tsee9iii/opspilot/internal/agent/tools/journal"
@@ -72,6 +73,7 @@ func main() {
 	registry.Register(git.NewGitPullTool())
 	registry.Register(httptool.NewHTTPCheckTool())
 	registry.Register(filetool.NewFileReadTool(agentCfg.Profiles()))
+	registry.Register(filesystem.NewFilesystemListTool(agentCfg.Profiles()))
 
 	exec := agent.NewRegistryExecutor(registry, agentCfg.Policy())
 	registry.Register(diagnose.NewDiagnoseTool(exec, agentCfg.Version))
