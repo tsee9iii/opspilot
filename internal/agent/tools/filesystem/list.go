@@ -99,6 +99,20 @@ func (t *FilesystemListTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *FilesystemListTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryFilesystem,
+		Domain:               "configuration",
+		Tags:                 []string{"filesystem", "directory", "configuration"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationMedium,
+		SinceVersion:         toolListVersion,
+	}
+}
+
 func (t *FilesystemListTool) Availability(context.Context) (bool, string) {
 	return true, ""
 }

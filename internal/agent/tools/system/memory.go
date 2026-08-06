@@ -59,6 +59,20 @@ func (t *MemoryTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *MemoryTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategorySystem,
+		Domain:               "linux",
+		Tags:                 []string{"memory", "usage", "host"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationInstant,
+		SinceVersion:         toolMemoryVersion,
+	}
+}
+
 func (t *MemoryTool) Availability(_ context.Context) (bool, string) {
 	return platformSupported()
 }

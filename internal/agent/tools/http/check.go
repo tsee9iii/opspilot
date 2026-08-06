@@ -86,6 +86,20 @@ func (t *HTTPCheckTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *HTTPCheckTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryHTTP,
+		Domain:               "networking",
+		Tags:                 []string{"http", "health", "network"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolHTTPCheckVersion,
+	}
+}
+
 func (t *HTTPCheckTool) Availability(_ context.Context) (bool, string) {
 	return true, ""
 }

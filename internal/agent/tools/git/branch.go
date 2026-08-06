@@ -63,6 +63,20 @@ func (t *GitBranchTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *GitBranchTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryGit,
+		Domain:               "source",
+		Tags:                 []string{"git", "branch", "repository"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolGitBranchVersion,
+	}
+}
+
 func (t *GitBranchTool) Availability(ctx context.Context) (bool, string) {
 	return agent.BinaryAvailable(ctx, t.run, "git")
 }

@@ -67,6 +67,20 @@ func (t *GitStatusTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *GitStatusTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryGit,
+		Domain:               "source",
+		Tags:                 []string{"git", "status", "repository"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolGitStatusVersion,
+	}
+}
+
 func (t *GitStatusTool) Availability(ctx context.Context) (bool, string) {
 	return agent.BinaryAvailable(ctx, t.run, "git")
 }

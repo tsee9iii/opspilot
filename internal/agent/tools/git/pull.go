@@ -66,6 +66,20 @@ func (t *GitPullTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationRequired
 }
 
+func (t *GitPullTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryGit,
+		Domain:               "source",
+		Tags:                 []string{"git", "pull", "repository"},
+		Risk:                 agent.RiskMutating,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolGitPullVersion,
+	}
+}
+
 func (t *GitPullTool) Availability(ctx context.Context) (bool, string) {
 	return agent.BinaryAvailable(ctx, t.run, "git")
 }

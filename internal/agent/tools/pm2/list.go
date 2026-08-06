@@ -72,6 +72,20 @@ func (t *PM2ListTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *PM2ListTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryPM2,
+		Domain:               "runtime",
+		Tags:                 []string{"pm2", "processes", "runtime"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolPM2ListVersion,
+	}
+}
+
 func (t *PM2ListTool) Availability(ctx context.Context) (bool, string) {
 	return agent.BinaryAvailable(ctx, t.run, "pm2")
 }

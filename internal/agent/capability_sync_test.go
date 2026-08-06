@@ -26,6 +26,17 @@ func (t *availTool) ParameterSchema() string { return EmptyParameterSchema }
 
 func (t *availTool) ConfirmationLevel() ConfirmationLevel { return ConfirmationNone }
 
+func (t *availTool) Metadata() ToolMetadata {
+	return ToolMetadata{
+		Name:              t.Name(),
+		Description:       t.Description(),
+		Category:          CategorySystem,
+		Tags:              []string{"test"},
+		Risk:              RiskReadOnly,
+		EstimatedDuration: DurationShort,
+	}
+}
+
 func (t *availTool) Availability(_ context.Context) (bool, string) { return t.ok, t.reason }
 
 func (t *availTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
@@ -41,8 +52,12 @@ func TestRegisterCapabilitiesIncludesAvailability(t *testing.T) {
 	defer srv.Close()
 
 	reg := NewRegistry()
-	reg.Register(&availTool{name: "ok.tool", ok: true})
-	reg.Register(&availTool{name: "bad.tool", ok: false, reason: "docker is not installed"})
+	if err := reg.Register(&availTool{name: "ok.tool", ok: true}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := reg.Register(&availTool{name: "bad.tool", ok: false, reason: "docker is not installed"}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 
 	a := New(&Config{CentralURL: srv.URL, AgentID: "a1"}, zap.NewNop(), NewRegistryExecutor(reg, ExecutionPolicy{Enabled: true}), reg)
 	if err := a.registerCapabilities(context.Background()); err != nil {

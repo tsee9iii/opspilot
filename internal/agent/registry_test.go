@@ -10,7 +10,9 @@ import (
 
 func TestRegistryRegisterFindList(t *testing.T) {
 	r := agent.NewRegistry()
-	r.Register(system.NewUptimeTool())
+	if err := r.Register(system.NewUptimeTool()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 
 	tool, ok := r.Find(system.ToolSystemUptime)
 	if !ok {
@@ -32,8 +34,12 @@ func TestRegistryRegisterFindList(t *testing.T) {
 
 func TestRegistryRegisterOverwrites(t *testing.T) {
 	r := agent.NewRegistry()
-	r.Register(system.NewUptimeTool())
-	r.Register(&fakeTool{name: system.ToolSystemUptime})
+	if err := r.Register(system.NewUptimeTool()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if err := r.Register(&fakeTool{name: system.ToolSystemUptime}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 	if len(r.List()) != 1 {
 		t.Fatalf("expected single registration, got: %v", r.List())
 	}
@@ -52,6 +58,17 @@ func (t *fakeTool) Description() string { return "fake tool" }
 func (t *fakeTool) ParameterSchema() string { return agent.EmptyParameterSchema }
 
 func (t *fakeTool) ConfirmationLevel() agent.ConfirmationLevel { return agent.ConfirmationNone }
+
+func (t *fakeTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:              t.Name(),
+		Description:       t.Description(),
+		Category:          agent.CategorySystem,
+		Tags:              []string{"test"},
+		Risk:              agent.RiskReadOnly,
+		EstimatedDuration: agent.DurationShort,
+	}
+}
 
 func (t *fakeTool) Availability(_ context.Context) (bool, string) { return true, "" }
 

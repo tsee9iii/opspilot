@@ -35,6 +35,17 @@ func (t *validationTool) ParameterSchema() string { return t.schema }
 
 func (t *validationTool) ConfirmationLevel() agent.ConfirmationLevel { return agent.ConfirmationNone }
 
+func (t *validationTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:              t.Name(),
+		Description:       t.Description(),
+		Category:          agent.CategorySystem,
+		Tags:              []string{"test"},
+		Risk:              agent.RiskReadOnly,
+		EstimatedDuration: agent.DurationShort,
+	}
+}
+
 func (t *validationTool) Availability(_ context.Context) (bool, string) { return true, "" }
 
 func (t *validationTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
@@ -62,7 +73,9 @@ func TestRegistryExecutorValidatesPayload(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tool := &validationTool{name: "validate", schema: validationTestSchema}
 			reg := agent.NewRegistry()
-			reg.Register(tool)
+			if err := reg.Register(tool); err != nil {
+				t.Fatalf("register: %v", err)
+			}
 
 			exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{Enabled: true})
 			_, err := exec.Execute(context.Background(), "validate", []byte(tt.payload))
@@ -93,7 +106,9 @@ func TestRegistryExecutorValidatesPayload(t *testing.T) {
 func TestRegistryExecutorEmptyPayloadValidatesAsEmptyObject(t *testing.T) {
 	tool := &validationTool{name: "empty", schema: agent.EmptyParameterSchema}
 	reg := agent.NewRegistry()
-	reg.Register(tool)
+	if err := reg.Register(tool); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 
 	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{Enabled: true})
 	if _, err := exec.Execute(context.Background(), "empty", nil); err != nil {

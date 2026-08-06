@@ -57,6 +57,20 @@ func (t *DeployProjectTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationRequired
 }
 
+func (t *DeployProjectTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryDeployment,
+		Domain:               "deployment",
+		Tags:                 []string{"deployment", "project", "strategy"},
+		Risk:                 agent.RiskMutating,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationMedium,
+		SinceVersion:         toolProjectVersion,
+	}
+}
+
 func (t *DeployProjectTool) Availability(context.Context) (bool, string) {
 	return true, ""
 }

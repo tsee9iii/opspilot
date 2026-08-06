@@ -80,6 +80,20 @@ func (t *DockerLogsTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *DockerLogsTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryDocker,
+		Domain:               "container",
+		Tags:                 []string{"docker", "container", "logs"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolDockerLogsVersion,
+	}
+}
+
 func (t *DockerLogsTool) Availability(ctx context.Context) (bool, string) {
 	return agent.BinaryAvailable(ctx, t.run, "docker")
 }

@@ -407,7 +407,9 @@ func TestFilesystemListRegisteredTool(t *testing.T) {
 	writeFile(t, filepath.Join(root, "app.conf"), "x")
 
 	registry := agent.NewRegistry()
-	registry.Register(NewFilesystemListTool(newTestLoader(t, root)))
+	if err := registry.Register(NewFilesystemListTool(newTestLoader(t, root))); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
 
 	out, err := exec.Execute(context.Background(), ToolFilesystemList, []byte(`{"path":"."}`))
@@ -429,7 +431,9 @@ func TestFilesystemListRegisteredTool(t *testing.T) {
 
 func TestFilesystemListRegistryPayloadValidation(t *testing.T) {
 	registry := agent.NewRegistry()
-	registry.Register(NewFilesystemListTool(nil))
+	if err := registry.Register(NewFilesystemListTool(nil)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
 
 	for _, payload := range []string{`{}`, `{"path":1}`, `{"path":"/x","extra":true}`} {

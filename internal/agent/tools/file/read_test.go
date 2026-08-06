@@ -297,7 +297,9 @@ func TestFileReadRegisteredTool(t *testing.T) {
 	writeFile(t, filepath.Join(root, "app.env"), []byte("FOO=bar\n"))
 
 	registry := agent.NewRegistry()
-	registry.Register(NewFileReadTool(newTestLoader(t, root)))
+	if err := registry.Register(NewFileReadTool(newTestLoader(t, root))); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
 
 	out, err := exec.Execute(context.Background(), ToolFileRead, []byte(`{"path":"app.env"}`))
@@ -319,7 +321,9 @@ func TestFileReadRegisteredTool(t *testing.T) {
 
 func TestFileReadRegistryPayloadValidation(t *testing.T) {
 	registry := agent.NewRegistry()
-	registry.Register(NewFileReadTool(nil))
+	if err := registry.Register(NewFileReadTool(nil)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
 
 	for _, payload := range []string{`{}`, `{"path":1}`, `{"path":"/x","extra":true}`} {

@@ -52,6 +52,20 @@ func (t *PM2RestartTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationRequired
 }
 
+func (t *PM2RestartTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryPM2,
+		Domain:               "runtime",
+		Tags:                 []string{"pm2", "restart", "runtime"},
+		Risk:                 agent.RiskMutating,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolPM2RestartVersion,
+	}
+}
+
 func (t *PM2RestartTool) Availability(ctx context.Context) (bool, string) {
 	return agent.BinaryAvailable(ctx, t.run, "pm2")
 }

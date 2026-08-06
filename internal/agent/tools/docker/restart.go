@@ -64,6 +64,20 @@ func (t *DockerRestartTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationRequired
 }
 
+func (t *DockerRestartTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryDocker,
+		Domain:               "container",
+		Tags:                 []string{"docker", "container", "restart"},
+		Risk:                 agent.RiskMutating,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolDockerRestartVersion,
+	}
+}
+
 func (t *DockerRestartTool) Availability(ctx context.Context) (bool, string) {
 	return agent.BinaryAvailable(ctx, t.run, "docker")
 }

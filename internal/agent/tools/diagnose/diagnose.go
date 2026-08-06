@@ -65,6 +65,20 @@ func (t *DiagnoseTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *DiagnoseTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryDiagnostics,
+		Domain:               "runtime",
+		Tags:                 []string{"workflow", "diagnostics", "health", "host"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationLong,
+		SinceVersion:         toolVersion,
+	}
+}
+
 func (t *DiagnoseTool) Availability(context.Context) (bool, string) {
 	return true, ""
 }

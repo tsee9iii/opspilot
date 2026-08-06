@@ -39,6 +39,20 @@ func (t *UptimeTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *UptimeTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategorySystem,
+		Domain:               "linux",
+		Tags:                 []string{"uptime", "load", "host"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationInstant,
+		SinceVersion:         toolUptimeVersion,
+	}
+}
+
 func (t *UptimeTool) Availability(_ context.Context) (bool, string) {
 	return platformSupported()
 }

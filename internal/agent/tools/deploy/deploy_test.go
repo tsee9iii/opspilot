@@ -445,6 +445,17 @@ func (s stubTool) ConfirmationLevel() agent.ConfirmationLevel      { return agen
 func (s stubTool) Availability(context.Context) (bool, string)     { return true, "" }
 func (s stubTool) Execute(context.Context, []byte) ([]byte, error) { return s.result, nil }
 
+func (s stubTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:              s.Name(),
+		Description:       s.Description(),
+		Category:          agent.CategorySystem,
+		Tags:              []string{"test"},
+		Risk:              agent.RiskReadOnly,
+		EstimatedDuration: agent.DurationShort,
+	}
+}
+
 // TestDeployToolThroughRegistryExecutor exercises the full production path for
 // each strategy: workflow.deploy is dispatched like any other command through
 // the RegistryExecutor, which applies the registry lookup, policy gate and
@@ -480,14 +491,24 @@ func TestDeployToolThroughRegistryExecutor(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			registry := agent.NewRegistry()
-			registry.Register(stubTool{name: "git.status", schema: stubGitSchema, result: []byte(`{"dirty":false}`)})
-			registry.Register(stubTool{name: "git.pull", schema: stubGitSchema, result: []byte(`{"updated":true}`)})
-			registry.Register(stubTool{name: "http.check", schema: stubHTTPSchema, result: []byte(`{"healthy":true}`)})
+			for _, stub := range []stubTool{
+				{name: "git.status", schema: stubGitSchema, result: []byte(`{"dirty":false}`)},
+				{name: "git.pull", schema: stubGitSchema, result: []byte(`{"updated":true}`)},
+				{name: "http.check", schema: stubHTTPSchema, result: []byte(`{"healthy":true}`)},
+			} {
+				if err := registry.Register(stub); err != nil {
+					t.Fatalf("register stub: %v", err)
+				}
+			}
 
 			strategies, runner := strategyRegistry(t)
-			registry.Register(NewDeployProjectTool(loader, strategies))
+			if err := registry.Register(NewDeployProjectTool(loader, strategies)); err != nil {
+				t.Fatalf("register deploy.project: %v", err)
+			}
 			exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
-			registry.Register(NewDeployTool(exec, loader, "test-1.2.3"))
+			if err := registry.Register(NewDeployTool(exec, loader, "test-1.2.3")); err != nil {
+				t.Fatalf("register workflow.deploy: %v", err)
+			}
 
 			out, err := exec.Execute(context.Background(), ToolDeploy, []byte(`{"project":"`+tc.project+`"}`))
 			if err != nil {
@@ -523,7 +544,9 @@ func TestDeployToolSchemaRejectedByRegistry(t *testing.T) {
 	loader := testLoader(t)
 	registry := agent.NewRegistry()
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
-	registry.Register(NewDeployTool(exec, loader, "test-1.2.3"))
+	if err := registry.Register(NewDeployTool(exec, loader, "test-1.2.3")); err != nil {
+		t.Fatalf("register workflow.deploy: %v", err)
+	}
 
 	_, err := exec.Execute(context.Background(), ToolDeploy, []byte(`{"project":123}`))
 	if err == nil {

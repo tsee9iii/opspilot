@@ -169,21 +169,34 @@ func TestDiagnoseToolDockerPermissionDenied(t *testing.T) {
 	}
 }
 
+func registerBaseTools(t *testing.T, registry *agent.Registry) {
+	t.Helper()
+	for _, tool := range []agent.Tool{
+		system.NewUptimeTool(),
+		system.NewCPUTool(),
+		system.NewMemoryTool(),
+		system.NewDiskTool(),
+		docker.NewDockerPsTool(),
+		systemctl.NewSystemCtlStatusTool(),
+	} {
+		if err := registry.Register(tool); err != nil {
+			t.Fatalf("register base tool: %v", err)
+		}
+	}
+}
+
 // TestDiagnoseToolThroughRegistryExecutor exercises the full production path:
 // the tool is dispatched exactly like any other command through the
 // RegistryExecutor, which applies the registry lookup, policy gate and JSON
 // Schema payload validation before the workflow runs.
 func TestDiagnoseToolThroughRegistryExecutor(t *testing.T) {
 	registry := agent.NewRegistry()
-	registry.Register(system.NewUptimeTool())
-	registry.Register(system.NewCPUTool())
-	registry.Register(system.NewMemoryTool())
-	registry.Register(system.NewDiskTool())
-	registry.Register(docker.NewDockerPsTool())
-	registry.Register(systemctl.NewSystemCtlStatusTool())
+	registerBaseTools(t, registry)
 
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
-	registry.Register(NewDiagnoseTool(exec, "test-1.2.3"))
+	if err := registry.Register(NewDiagnoseTool(exec, "test-1.2.3")); err != nil {
+		t.Fatalf("register diagnose: %v", err)
+	}
 
 	out, err := exec.Execute(context.Background(), ToolDiagnose, []byte(`{"service":"nginx"}`))
 	if err != nil {
@@ -224,15 +237,12 @@ func TestDiagnoseToolThroughRegistryExecutor(t *testing.T) {
 
 func TestDiagnoseToolSchemaRejectedByRegistry(t *testing.T) {
 	registry := agent.NewRegistry()
-	registry.Register(system.NewUptimeTool())
-	registry.Register(system.NewCPUTool())
-	registry.Register(system.NewMemoryTool())
-	registry.Register(system.NewDiskTool())
-	registry.Register(docker.NewDockerPsTool())
-	registry.Register(systemctl.NewSystemCtlStatusTool())
+	registerBaseTools(t, registry)
 
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
-	registry.Register(NewDiagnoseTool(exec, "test-1.2.3"))
+	if err := registry.Register(NewDiagnoseTool(exec, "test-1.2.3")); err != nil {
+		t.Fatalf("register diagnose: %v", err)
+	}
 
 	_, err := exec.Execute(context.Background(), ToolDiagnose, []byte(`{"service":123}`))
 	if err == nil {

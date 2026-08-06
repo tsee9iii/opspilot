@@ -61,6 +61,20 @@ func (t *DiskTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *DiskTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategorySystem,
+		Domain:               "linux",
+		Tags:                 []string{"disk", "usage", "filesystem"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationInstant,
+		SinceVersion:         toolDiskVersion,
+	}
+}
+
 func (t *DiskTool) Availability(_ context.Context) (bool, string) {
 	return platformSupported()
 }

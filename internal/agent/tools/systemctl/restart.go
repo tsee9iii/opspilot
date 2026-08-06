@@ -64,6 +64,20 @@ func (t *SystemCtlRestartTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationRequired
 }
 
+func (t *SystemCtlRestartTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategorySystemd,
+		Domain:               "linux",
+		Tags:                 []string{"systemd", "service", "restart"},
+		Risk:                 agent.RiskMutating,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolSystemCtlRestartVersion,
+	}
+}
+
 func (t *SystemCtlRestartTool) Availability(ctx context.Context) (bool, string) {
 	return agent.BinaryAvailable(ctx, t.run, "systemctl")
 }

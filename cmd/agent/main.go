@@ -53,39 +53,51 @@ func main() {
 	}
 
 	registry := agent.NewRegistry()
-	registry.Register(system.NewUptimeTool())
-	registry.Register(system.NewMemoryTool())
-	registry.Register(system.NewCPUTool())
-	registry.Register(system.NewDiskTool())
-	registry.Register(system.NewProcessesTool())
-	registry.Register(pm2.NewPM2ListTool())
-	registry.Register(pm2.NewPM2LogsTool())
-	registry.Register(pm2.NewPM2RestartTool())
-	registry.Register(docker.NewDockerPsTool())
-	registry.Register(docker.NewDockerLogsTool())
-	registry.Register(docker.NewDockerRestartTool())
-	registry.Register(docker.NewDockerInspectTool())
-	registry.Register(systemctl.NewSystemCtlStatusTool())
-	registry.Register(systemctl.NewSystemCtlRestartTool())
-	registry.Register(journal.NewJournalLogsTool())
-	registry.Register(git.NewGitStatusTool())
-	registry.Register(git.NewGitCurrentCommitTool())
-	registry.Register(git.NewGitBranchTool())
-	registry.Register(git.NewGitPullTool())
-	registry.Register(httptool.NewHTTPCheckTool())
-	registry.Register(filetool.NewFileReadTool(agentCfg.Profiles()))
-	registry.Register(filesystem.NewFilesystemListTool(agentCfg.Profiles()))
+	for _, tool := range []agent.Tool{
+		system.NewUptimeTool(),
+		system.NewMemoryTool(),
+		system.NewCPUTool(),
+		system.NewDiskTool(),
+		system.NewProcessesTool(),
+		pm2.NewPM2ListTool(),
+		pm2.NewPM2LogsTool(),
+		pm2.NewPM2RestartTool(),
+		docker.NewDockerPsTool(),
+		docker.NewDockerLogsTool(),
+		docker.NewDockerRestartTool(),
+		docker.NewDockerInspectTool(),
+		systemctl.NewSystemCtlStatusTool(),
+		systemctl.NewSystemCtlRestartTool(),
+		journal.NewJournalLogsTool(),
+		git.NewGitStatusTool(),
+		git.NewGitCurrentCommitTool(),
+		git.NewGitBranchTool(),
+		git.NewGitPullTool(),
+		httptool.NewHTTPCheckTool(),
+		filetool.NewFileReadTool(agentCfg.Profiles()),
+		filesystem.NewFilesystemListTool(agentCfg.Profiles()),
+	} {
+		if err := registry.Register(tool); err != nil {
+			log.Fatalf("agent: register tool: %v", err)
+		}
+	}
 
 	exec := agent.NewRegistryExecutor(registry, agentCfg.Policy())
-	registry.Register(diagnose.NewDiagnoseTool(exec, agentCfg.Version))
+	if err := registry.Register(diagnose.NewDiagnoseTool(exec, agentCfg.Version)); err != nil {
+		log.Fatalf("agent: register tool: %v", err)
+	}
 
 	strategies := deploy.NewRegistry()
 	strategies.Register(deploy.NewDockerComposeStrategy())
 	strategies.Register(deploy.NewPM2Strategy())
 	strategies.Register(deploy.NewScriptStrategy())
 
-	registry.Register(deploytools.NewDeployProjectTool(agentCfg.Profiles(), strategies))
-	registry.Register(deploytools.NewDeployTool(exec, agentCfg.Profiles(), agentCfg.Version))
+	if err := registry.Register(deploytools.NewDeployProjectTool(agentCfg.Profiles(), strategies)); err != nil {
+		log.Fatalf("agent: register tool: %v", err)
+	}
+	if err := registry.Register(deploytools.NewDeployTool(exec, agentCfg.Profiles(), agentCfg.Version)); err != nil {
+		log.Fatalf("agent: register tool: %v", err)
+	}
 
 	a := agent.New(agentCfg, zl, exec, registry)
 

@@ -14,7 +14,9 @@ import (
 
 func TestRegistryExecutorRunsTool(t *testing.T) {
 	reg := agent.NewRegistry()
-	reg.Register(system.NewUptimeTool())
+	if err := reg.Register(system.NewUptimeTool()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 
 	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{Enabled: true})
 	result, err := exec.Execute(context.Background(), system.ToolSystemUptime, nil)
@@ -45,7 +47,9 @@ func TestRegistryExecutorUnknownTool(t *testing.T) {
 
 func TestRegistryExecutorPolicyDenied(t *testing.T) {
 	reg := agent.NewRegistry()
-	reg.Register(system.NewUptimeTool())
+	if err := reg.Register(system.NewUptimeTool()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{
 		Enabled:        true,
 		DeniedCommands: []string{system.ToolSystemUptime},
@@ -58,7 +62,9 @@ func TestRegistryExecutorPolicyDenied(t *testing.T) {
 
 func TestRegistryExecutorPolicyNotAllowed(t *testing.T) {
 	reg := agent.NewRegistry()
-	reg.Register(system.NewUptimeTool())
+	if err := reg.Register(system.NewUptimeTool()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{
 		Enabled:         true,
 		AllowedCommands: []string{"other"},
@@ -71,7 +77,9 @@ func TestRegistryExecutorPolicyNotAllowed(t *testing.T) {
 
 func TestRegistryExecutorDisabledPolicy(t *testing.T) {
 	reg := agent.NewRegistry()
-	reg.Register(system.NewUptimeTool())
+	if err := reg.Register(system.NewUptimeTool()); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{Enabled: false})
 	_, err := exec.Execute(context.Background(), system.ToolSystemUptime, nil)
 	if !errors.Is(err, agent.ErrPolicyDisabled) {
@@ -81,7 +89,9 @@ func TestRegistryExecutorDisabledPolicy(t *testing.T) {
 
 func TestRegistryExecutorTimeout(t *testing.T) {
 	reg := agent.NewRegistry()
-	reg.Register(&blockingTool{name: "slow"})
+	if err := reg.Register(&blockingTool{name: "slow"}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 	exec := agent.NewRegistryExecutor(reg, agent.ExecutionPolicy{Enabled: true, Timeout: 100 * time.Millisecond})
 
 	start := time.Now()
@@ -108,6 +118,17 @@ func (t *blockingTool) Description() string { return "blocking tool" }
 func (t *blockingTool) ParameterSchema() string { return agent.EmptyParameterSchema }
 
 func (t *blockingTool) ConfirmationLevel() agent.ConfirmationLevel { return agent.ConfirmationNone }
+
+func (t *blockingTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:              t.Name(),
+		Description:       t.Description(),
+		Category:          agent.CategorySystem,
+		Tags:              []string{"test"},
+		Risk:              agent.RiskReadOnly,
+		EstimatedDuration: agent.DurationShort,
+	}
+}
 
 func (t *blockingTool) Availability(_ context.Context) (bool, string) { return true, "" }
 

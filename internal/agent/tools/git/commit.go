@@ -68,6 +68,20 @@ func (t *GitCurrentCommitTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *GitCurrentCommitTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryGit,
+		Domain:               "source",
+		Tags:                 []string{"git", "commit", "repository"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolGitCurrentCommitVersion,
+	}
+}
+
 func (t *GitCurrentCommitTool) Availability(ctx context.Context) (bool, string) {
 	return agent.BinaryAvailable(ctx, t.run, "git")
 }

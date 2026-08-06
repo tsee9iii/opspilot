@@ -79,6 +79,20 @@ func (t *FileReadTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *FileReadTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategoryFilesystem,
+		Domain:               "configuration",
+		Tags:                 []string{"file", "configuration", "filesystem"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationShort,
+		SinceVersion:         toolReadVersion,
+	}
+}
+
 func (t *FileReadTool) Availability(context.Context) (bool, string) {
 	return true, ""
 }

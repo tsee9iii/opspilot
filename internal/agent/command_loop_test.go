@@ -29,6 +29,17 @@ func (t *spyTool) ParameterSchema() string { return t.schema }
 
 func (t *spyTool) ConfirmationLevel() ConfirmationLevel { return ConfirmationNone }
 
+func (t *spyTool) Metadata() ToolMetadata {
+	return ToolMetadata{
+		Name:              t.Name(),
+		Description:       t.Description(),
+		Category:          CategorySystem,
+		Tags:              []string{"test"},
+		Risk:              RiskReadOnly,
+		EstimatedDuration: DurationShort,
+	}
+}
+
 func (t *spyTool) Availability(_ context.Context) (bool, string) { return true, "" }
 
 func (t *spyTool) Execute(_ context.Context, _ []byte) ([]byte, error) {
@@ -79,7 +90,9 @@ func TestPollOnceValidationFailureFailsCommand(t *testing.T) {
 	defer srv.Close()
 
 	reg := NewRegistry()
-	reg.Register(tool)
+	if err := reg.Register(tool); err != nil {
+		t.Fatalf("register: %v", err)
+	}
 
 	a := New(&Config{CentralURL: srv.URL, AgentID: "a1"}, zap.NewNop(), NewRegistryExecutor(reg, ExecutionPolicy{Enabled: true}), reg)
 

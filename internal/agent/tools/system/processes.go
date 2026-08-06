@@ -83,6 +83,20 @@ func (t *ProcessesTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *ProcessesTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategorySystem,
+		Domain:               "linux",
+		Tags:                 []string{"processes", "cpu", "host"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationInstant,
+		SinceVersion:         toolProcessesVersion,
+	}
+}
+
 func (t *ProcessesTool) Availability(_ context.Context) (bool, string) {
 	return platformSupported()
 }

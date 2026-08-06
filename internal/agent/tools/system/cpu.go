@@ -83,6 +83,20 @@ func (t *CPUTool) ConfirmationLevel() agent.ConfirmationLevel {
 	return agent.ConfirmationNone
 }
 
+func (t *CPUTool) Metadata() agent.ToolMetadata {
+	return agent.ToolMetadata{
+		Name:                 t.Name(),
+		Description:          t.Description(),
+		Category:             agent.CategorySystem,
+		Domain:               "linux",
+		Tags:                 []string{"cpu", "usage", "host"},
+		Risk:                 agent.RiskReadOnly,
+		RequiresConfirmation: t.ConfirmationLevel() == agent.ConfirmationRequired,
+		EstimatedDuration:    agent.DurationInstant,
+		SinceVersion:         toolCPUVersion,
+	}
+}
+
 func (t *CPUTool) Availability(_ context.Context) (bool, string) {
 	return platformSupported()
 }
