@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
 
 	"github.com/tsee9iii/opspilot/internal/agent"
 )
@@ -38,6 +39,13 @@ func psContainers(ctx context.Context, run func(context.Context, string, ...stri
 		return nil, fmt.Errorf("%s: decode command result: %w", tool, err)
 	}
 	if res.ExitCode != 0 {
+		if dockerPermissionDenied(res.Stderr) {
+			return nil, &agent.ToolError{
+				Code:       "docker_permission_denied",
+				Message:    "The opspilot user is not a member of the docker group.",
+				Suggestion: "Run: sudo usermod -aG docker opspilot && restart the agent.",
+			}
+		}
 		return nil, fmt.Errorf("%s: docker ps failed: %s", tool, res.Stderr)
 	}
 	containers, err := parseDockerPS(res.Stdout)
@@ -45,6 +53,13 @@ func psContainers(ctx context.Context, run func(context.Context, string, ...stri
 		return nil, fmt.Errorf("%s: %w", tool, err)
 	}
 	return containers, nil
+}
+
+// dockerPermissionDenied reports whether docker stderr indicates the operator
+// is not permitted to reach the docker daemon, typically a missing docker
+// group membership.
+func dockerPermissionDenied(stderr string) bool {
+	return strings.Contains(strings.ToLower(stderr), "permission denied while trying to connect to the docker")
 }
 
 // containerExists verifies a running container matching idOrName exists.

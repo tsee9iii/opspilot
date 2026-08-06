@@ -48,9 +48,6 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.log.Warn("capability registration failed", zap.Error(err))
 	} else {
 		a.log.Info("capabilities registered", zap.Int("count", len(a.registry.List())))
-		for _, name := range a.registry.List() {
-			a.log.Debug("capability synced", zap.String("tool", name))
-		}
 	}
 
 	a.log.Info("agent heartbeat loop started", zap.Duration("interval", heartbeatInterval))

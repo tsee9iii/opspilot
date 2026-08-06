@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -76,6 +77,46 @@ func TestDockerPsToolExecuteEmpty(t *testing.T) {
 	}
 	if resp.Containers == nil || len(resp.Containers) != 0 {
 		t.Fatalf("expected empty container list, got: %#v", resp.Containers)
+	}
+}
+
+func TestDockerPermissionDeniedDetection(t *testing.T) {
+	stderr := "Got permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock"
+	if !dockerPermissionDenied(stderr) {
+		t.Fatalf("expected permission denied detection: %q", stderr)
+	}
+	if dockerPermissionDenied("Cannot connect to the Docker daemon") {
+		t.Fatal("unexpected permission denied detection")
+	}
+}
+
+func TestDockerPsToolPermissionDenied(t *testing.T) {
+	out, err := json.Marshal(agent.CommandResult{
+		Stderr:   "Got permission denied while trying to connect to the Docker daemon socket",
+		ExitCode: 1,
+	})
+	if err != nil {
+		t.Fatalf("marshal command result: %v", err)
+	}
+
+	tool := NewDockerPsTool()
+	tool.run = func(_ context.Context, _ string, _ ...string) ([]byte, error) {
+		return out, nil
+	}
+
+	_, err = tool.Execute(context.Background(), nil)
+	var te *agent.ToolError
+	if !errors.As(err, &te) {
+		t.Fatalf("expected a structured ToolError, got: %v", err)
+	}
+	if te.Code != "docker_permission_denied" {
+		t.Fatalf("unexpected error code: %s", te.Code)
+	}
+	if te.Message == "" || te.Suggestion == "" {
+		t.Fatalf("expected message and suggestion: %+v", te)
+	}
+	if !strings.Contains(te.Suggestion, "usermod") {
+		t.Fatalf("expected actionable suggestion: %s", te.Suggestion)
 	}
 }
 

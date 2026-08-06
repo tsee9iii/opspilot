@@ -70,17 +70,7 @@ func main() {
 	registry.Register(httptool.NewHTTPCheckTool())
 
 	exec := agent.NewRegistryExecutor(registry, agentCfg.Policy())
-	registry.Register(diagnose.NewDiagnoseTool(exec))
-
-	log.Printf("debug: registration complete, registry size=%d", len(registry.List()))
-	for _, name := range registry.List() {
-		log.Printf("debug: registered tool=%q", name)
-	}
-	if _, ok := registry.Find(diagnose.ToolDiagnose); ok {
-		log.Printf("debug: %q IS present in registry after registration", diagnose.ToolDiagnose)
-	} else {
-		log.Printf("debug: %q MISSING from registry after registration", diagnose.ToolDiagnose)
-	}
+	registry.Register(diagnose.NewDiagnoseTool(exec, agentCfg.Version))
 
 	a := agent.New(agentCfg, zl, exec, registry)
 

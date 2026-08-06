@@ -40,7 +40,7 @@ func cmdOut(stdout, stderr string, exit int) []byte {
 }
 
 func TestDiagnoseToolMetadata(t *testing.T) {
-	tool := NewDiagnoseTool(newFakeExecutor())
+	tool := NewDiagnoseTool(newFakeExecutor(), "test-1.2.3")
 	if tool.Name() != ToolDiagnose {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
@@ -60,7 +60,7 @@ func TestDiagnoseToolMetadata(t *testing.T) {
 }
 
 func TestDiagnoseToolInvalidPayload(t *testing.T) {
-	tool := NewDiagnoseTool(newFakeExecutor())
+	tool := NewDiagnoseTool(newFakeExecutor(), "test-1.2.3")
 	_, err := tool.Execute(context.Background(), []byte(`not json`))
 	if err == nil {
 		t.Fatal("expected error for invalid payload")
@@ -72,7 +72,7 @@ func TestDiagnoseToolExecute(t *testing.T) {
 	fe.results["system.uptime"] = func([]byte) ([]byte, error) { return cmdOut("up 5 days", "", 0), nil }
 	fe.fail("docker.ps", "docker is not installed")
 
-	tool := NewDiagnoseTool(fe)
+	tool := NewDiagnoseTool(fe, "test-1.2.3")
 	out, err := tool.Execute(context.Background(), []byte(`{"service":"nginx"}`))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -84,6 +84,21 @@ func TestDiagnoseToolExecute(t *testing.T) {
 	}
 	if report.Workflow != "diagnose" || report.Status != "completed" {
 		t.Fatalf("unexpected report: %+v", report)
+	}
+	if report.Version != workflow.DiagnoseWorkflowVersion {
+		t.Fatalf("unexpected workflow version: %s", report.Version)
+	}
+	if report.AgentVersion != "test-1.2.3" {
+		t.Fatalf("unexpected agent version: %s", report.AgentVersion)
+	}
+	if report.Hostname == "" {
+		t.Fatal("expected report hostname to be set")
+	}
+	if report.DurationMS < 0 {
+		t.Fatalf("unexpected total duration: %d", report.DurationMS)
+	}
+	if report.CompletedAt.Before(report.StartedAt) {
+		t.Fatal("report completed before it started")
 	}
 	if len(report.Steps) != 6 {
 		t.Fatalf("expected 6 steps, got %d", len(report.Steps))
@@ -103,7 +118,7 @@ func TestDiagnoseToolExecuteEmptyPayload(t *testing.T) {
 	fe := newFakeExecutor()
 	fe.results["system.uptime"] = func([]byte) ([]byte, error) { return cmdOut("up 5 days", "", 0), nil }
 
-	tool := NewDiagnoseTool(fe)
+	tool := NewDiagnoseTool(fe, "test-1.2.3")
 	out, err := tool.Execute(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -115,6 +130,42 @@ func TestDiagnoseToolExecuteEmptyPayload(t *testing.T) {
 	}
 	if len(report.Steps) != 5 {
 		t.Fatalf("expected 5 steps without a service, got %d", len(report.Steps))
+	}
+}
+
+func TestDiagnoseToolDockerPermissionDenied(t *testing.T) {
+	fe := newFakeExecutor()
+	fe.results["system.uptime"] = func([]byte) ([]byte, error) { return cmdOut("up 5 days", "", 0), nil }
+	fe.results["docker.ps"] = func([]byte) ([]byte, error) {
+		return nil, &agent.ToolError{
+			Code:       "docker_permission_denied",
+			Message:    "The opspilot user is not a member of the docker group.",
+			Suggestion: "Run: sudo usermod -aG docker opspilot && restart the agent.",
+		}
+	}
+
+	tool := NewDiagnoseTool(fe, "test-1.2.3")
+	out, err := tool.Execute(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var report workflow.DiagnoseReport
+	if err := json.Unmarshal(out, &report); err != nil {
+		t.Fatalf("decode report: %v", err)
+	}
+	step := report.Steps[4]
+	if step.Status != "failed" {
+		t.Fatalf("expected docker.ps failed: %+v", step)
+	}
+	if step.ErrorCode != "docker_permission_denied" {
+		t.Fatalf("unexpected error_code: %s", step.ErrorCode)
+	}
+	if step.Message != "The opspilot user is not a member of the docker group." {
+		t.Fatalf("unexpected message: %s", step.Message)
+	}
+	if step.Suggestion != "Run: sudo usermod -aG docker opspilot && restart the agent." {
+		t.Fatalf("unexpected suggestion: %s", step.Suggestion)
 	}
 }
 
@@ -132,7 +183,7 @@ func TestDiagnoseToolThroughRegistryExecutor(t *testing.T) {
 	registry.Register(systemctl.NewSystemCtlStatusTool())
 
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
-	registry.Register(NewDiagnoseTool(exec))
+	registry.Register(NewDiagnoseTool(exec, "test-1.2.3"))
 
 	out, err := exec.Execute(context.Background(), ToolDiagnose, []byte(`{"service":"nginx"}`))
 	if err != nil {
@@ -181,7 +232,7 @@ func TestDiagnoseToolSchemaRejectedByRegistry(t *testing.T) {
 	registry.Register(systemctl.NewSystemCtlStatusTool())
 
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
-	registry.Register(NewDiagnoseTool(exec))
+	registry.Register(NewDiagnoseTool(exec, "test-1.2.3"))
 
 	_, err := exec.Execute(context.Background(), ToolDiagnose, []byte(`{"service":123}`))
 	if err == nil {

@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/tsee9iii/opspilot/internal/agent"
@@ -71,6 +72,12 @@ func (e *Executor) Execute(ctx context.Context, p project.Project, wf Workflow) 
 		if err != nil {
 			sr.Status = StepFailed
 			sr.Error = err.Error()
+			var te *agent.ToolError
+			if errors.As(err, &te) {
+				sr.ErrorCode = te.Code
+				sr.Message = te.Message
+				sr.Suggestion = te.Suggestion
+			}
 			sr.FinishedAt = time.Now()
 			e.emit(step.Name, sr.Status)
 			res.Steps = append(res.Steps, sr)

@@ -34,12 +34,15 @@ type diagnoseRequest struct {
 
 // DiagnoseTool runs the host diagnostic workflow through the injected
 // executor — the same RegistryExecutor the agent uses for every other command.
+// agentVersion is reported as report metadata so the source build is
+// identifiable.
 type DiagnoseTool struct {
-	executor agent.Executor
+	executor     agent.Executor
+	agentVersion string
 }
 
-func NewDiagnoseTool(executor agent.Executor) *DiagnoseTool {
-	return &DiagnoseTool{executor: executor}
+func NewDiagnoseTool(executor agent.Executor, agentVersion string) *DiagnoseTool {
+	return &DiagnoseTool{executor: executor, agentVersion: agentVersion}
 }
 
 func (t *DiagnoseTool) Name() string {
@@ -78,7 +81,7 @@ func (t *DiagnoseTool) Execute(ctx context.Context, payload []byte) ([]byte, err
 		}
 	}
 
-	report := workflow.RunHostDiagnose(ctx, t.executor, req.Service)
+	report := workflow.RunHostDiagnose(ctx, t.executor, req.Service, t.agentVersion)
 	out, err := json.Marshal(report)
 	if err != nil {
 		return nil, fmt.Errorf("%s: marshal report: %w", ToolDiagnose, err)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 )
 
 // RegistryExecutor runs tools via the tool registry and never switches on
@@ -21,7 +20,6 @@ func NewRegistryExecutor(registry *Registry, policy ExecutionPolicy) *RegistryEx
 func (e *RegistryExecutor) Execute(ctx context.Context, toolName string, payload []byte) ([]byte, error) {
 	tool, ok := e.registry.Find(toolName)
 	if !ok {
-		log.Printf("debug: registry.Find miss tool=%q registry_size=%d", toolName, len(e.registry.List()))
 		return nil, ErrToolNotImplemented
 	}
 

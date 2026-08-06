@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/tsee9iii/opspilot/internal/agent"
 	"github.com/tsee9iii/opspilot/internal/agent/project"
 )
 
@@ -133,6 +134,40 @@ func TestExecuteMultipleStepsInOrder(t *testing.T) {
 		if sr.Status != StepCompleted {
 			t.Fatalf("step %d not completed: %+v", i, sr)
 		}
+	}
+}
+
+func TestExecuteStepToolError(t *testing.T) {
+	p := loadTestProject(t, nil)
+	fe := newFakeExecutor()
+	fe.results["docker.restart"] = func([]byte) ([]byte, error) {
+		return nil, &agent.ToolError{
+			Code:       "docker_permission_denied",
+			Message:    "The opspilot user is not a member of the docker group.",
+			Suggestion: "Run: sudo usermod -aG docker opspilot && restart the agent.",
+		}
+	}
+	wf := NewWorkflow("deploy", Step{Name: "restart", Tool: p.Tools["restart"]})
+	res := run(t, fe, p, wf)
+
+	if len(res.Steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(res.Steps))
+	}
+	sr := res.Steps[0]
+	if sr.Status != StepFailed {
+		t.Fatalf("expected step failed: %+v", sr)
+	}
+	if sr.ErrorCode != "docker_permission_denied" {
+		t.Fatalf("unexpected error code: %s", sr.ErrorCode)
+	}
+	if sr.Message != "The opspilot user is not a member of the docker group." {
+		t.Fatalf("unexpected message: %s", sr.Message)
+	}
+	if sr.Suggestion != "Run: sudo usermod -aG docker opspilot && restart the agent." {
+		t.Fatalf("unexpected suggestion: %s", sr.Suggestion)
+	}
+	if sr.Error == "" {
+		t.Fatal("expected error text to remain set")
 	}
 }
 

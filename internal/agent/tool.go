@@ -16,6 +16,17 @@ type CommandResult struct {
 	ExitCode int    `json:"exit_code"`
 }
 
+// ToolError is a structured error a tool may return for a common, actionable
+// failure. It carries a machine-readable code and remediation guidance so a
+// workflow report can surface them alongside the failure.
+type ToolError struct {
+	Code       string `json:"error_code"`
+	Message    string `json:"message"`
+	Suggestion string `json:"suggestion"`
+}
+
+func (e *ToolError) Error() string { return e.Message }
+
 // EmptyParameterSchema is the parameter schema of tools that accept no
 // payload fields.
 const EmptyParameterSchema = `{"type":"object","properties":{}}`

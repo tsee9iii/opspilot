@@ -45,7 +45,7 @@ func TestHostDiagnoseReportShape(t *testing.T) {
 	fe.results["system.uptime"] = func([]byte) ([]byte, error) { return cmdOut("up 5 days", "", 0), nil }
 
 	res := runDiagnose(t, fe, project.Project{}, BuildHostDiagnoseWorkflow("nginx"))
-	out, err := json.Marshal(reportFromResult(res))
+	out, err := json.Marshal(reportFromResult(res, "test-1.2.3"))
 	if err != nil {
 		t.Fatalf("marshal report: %v", err)
 	}
@@ -54,13 +54,25 @@ func TestHostDiagnoseReportShape(t *testing.T) {
 	if err := json.Unmarshal(out, &decoded); err != nil {
 		t.Fatalf("report is not valid JSON: %v", err)
 	}
-	for _, key := range []string{"workflow", "status", "started_at", "completed_at", "steps"} {
+	for _, key := range []string{"workflow", "version", "agent_version", "hostname", "status", "started_at", "completed_at", "duration_ms", "steps"} {
 		if _, ok := decoded[key]; !ok {
 			t.Fatalf("report missing key %s: %s", key, out)
 		}
 	}
 	if decoded["workflow"] != "diagnose" || decoded["status"] != "completed" {
 		t.Fatalf("unexpected report: %s", out)
+	}
+	if decoded["version"] != DiagnoseWorkflowVersion {
+		t.Fatalf("unexpected version: %s", out)
+	}
+	if decoded["agent_version"] != "test-1.2.3" {
+		t.Fatalf("unexpected agent_version: %s", out)
+	}
+	if decoded["hostname"] == "" {
+		t.Fatalf("expected hostname to be set: %s", out)
+	}
+	if _, ok := decoded["duration_ms"].(float64); !ok {
+		t.Fatalf("expected numeric duration_ms: %s", out)
 	}
 	steps, ok := decoded["steps"].([]any)
 	if !ok || len(steps) != 6 {
@@ -82,7 +94,7 @@ func TestHostDiagnoseCommandResultStdoutStderr(t *testing.T) {
 	fe.results["system.uptime"] = func([]byte) ([]byte, error) { return cmdOut(" 10:00 up 5 days", "", 0), nil }
 	fe.results["system.disk"] = func([]byte) ([]byte, error) { return cmdOut("", "statfs failed", 1), nil }
 
-	report := RunHostDiagnose(context.Background(), fe, "")
+	report := RunHostDiagnose(context.Background(), fe, "", "test-1.2.3")
 
 	if report.Steps[0].Stdout != " 10:00 up 5 days" || report.Steps[0].Stderr != "" {
 		t.Fatalf("unexpected uptime output: %+v", report.Steps[0])
@@ -98,7 +110,7 @@ func TestHostDiagnoseStructuredOutputPreserved(t *testing.T) {
 		return []byte(`{"service":"nginx","active_state":"inactive"}`), nil
 	}
 
-	report := RunHostDiagnose(context.Background(), fe, "nginx")
+	report := RunHostDiagnose(context.Background(), fe, "nginx", "test-1.2.3")
 
 	step := report.Steps[5]
 	if step.Stdout != `{"service":"nginx","active_state":"inactive"}` {
@@ -113,7 +125,7 @@ func TestHostDiagnoseDockerUnavailable(t *testing.T) {
 	}
 	fe.fail("docker.ps", "docker is not installed")
 
-	report := RunHostDiagnose(context.Background(), fe, "nginx")
+	report := RunHostDiagnose(context.Background(), fe, "nginx", "test-1.2.3")
 
 	if report.Status != "completed" {
 		t.Fatalf("workflow must succeed despite docker being unavailable: %+v", report)
@@ -138,7 +150,7 @@ func TestHostDiagnoseServiceInactive(t *testing.T) {
 		return []byte(`{"service":"nginx","active_state":"inactive"}`), nil
 	}
 
-	report := RunHostDiagnose(context.Background(), fe, "nginx")
+	report := RunHostDiagnose(context.Background(), fe, "nginx", "test-1.2.3")
 
 	if report.Status != "completed" {
 		t.Fatalf("expected completed status: %+v", report)
@@ -156,7 +168,7 @@ func TestHostDiagnoseOneCapabilityFails(t *testing.T) {
 	}
 	fe.fail("system.cpu", "cannot read /proc/stat")
 
-	report := RunHostDiagnose(context.Background(), fe, "")
+	report := RunHostDiagnose(context.Background(), fe, "", "test-1.2.3")
 
 	if report.Status != "completed" {
 		t.Fatalf("workflow must succeed when a single check fails: %+v", report)
@@ -172,7 +184,7 @@ func TestHostDiagnoseAllCapabilitiesSucceed(t *testing.T) {
 		fe.ok(tool)
 	}
 
-	report := RunHostDiagnose(context.Background(), fe, "nginx")
+	report := RunHostDiagnose(context.Background(), fe, "nginx", "test-1.2.3")
 
 	if report.Status != "completed" {
 		t.Fatalf("expected completed status: %+v", report)
@@ -190,7 +202,7 @@ func TestHostDiagnoseAllStepsFail(t *testing.T) {
 		fe.fail(tool, "boom")
 	}
 
-	report := RunHostDiagnose(context.Background(), fe, "")
+	report := RunHostDiagnose(context.Background(), fe, "", "test-1.2.3")
 
 	if report.Status != "failed" {
 		t.Fatalf("expected failed status when no step completes: %+v", report)
@@ -208,7 +220,7 @@ func TestHostDiagnoseStepDuration(t *testing.T) {
 	fe.ok("system.disk")
 	fe.ok("docker.ps")
 
-	report := RunHostDiagnose(context.Background(), fe, "")
+	report := RunHostDiagnose(context.Background(), fe, "", "test-1.2.3")
 
 	for i, step := range report.Steps {
 		if step.DurationMS < 0 {
@@ -220,6 +232,49 @@ func TestHostDiagnoseStepDuration(t *testing.T) {
 	}
 	if report.StartedAt.After(report.CompletedAt) {
 		t.Fatal("workflow completed before it started")
+	}
+	if report.DurationMS != report.CompletedAt.Sub(report.StartedAt).Milliseconds() {
+		t.Fatalf("total duration does not match timestamps: %d", report.DurationMS)
+	}
+	if report.Version != DiagnoseWorkflowVersion {
+		t.Fatalf("unexpected workflow version: %s", report.Version)
+	}
+	if report.AgentVersion != "test-1.2.3" || report.Hostname == "" {
+		t.Fatalf("unexpected report metadata: %+v", report)
+	}
+}
+
+func TestHostDiagnoseStructuredError(t *testing.T) {
+	fe := newHostExecutor()
+	fe.ok("system.uptime")
+	fe.ok("system.cpu")
+	fe.ok("system.memory")
+	fe.ok("system.disk")
+	fe.results["docker.ps"] = func([]byte) ([]byte, error) {
+		return nil, &agent.ToolError{
+			Code:       "docker_permission_denied",
+			Message:    "The opspilot user is not a member of the docker group.",
+			Suggestion: "Run: sudo usermod -aG docker opspilot && restart the agent.",
+		}
+	}
+
+	report := RunHostDiagnose(context.Background(), fe, "", "test-1.2.3")
+
+	step := report.Steps[4]
+	if step.Status != "failed" {
+		t.Fatalf("expected docker.ps failed: %+v", step)
+	}
+	if step.ErrorCode != "docker_permission_denied" {
+		t.Fatalf("unexpected error_code: %s", step.ErrorCode)
+	}
+	if step.Message != "The opspilot user is not a member of the docker group." {
+		t.Fatalf("unexpected message: %s", step.Message)
+	}
+	if step.Suggestion != "Run: sudo usermod -aG docker opspilot && restart the agent." {
+		t.Fatalf("unexpected suggestion: %s", step.Suggestion)
+	}
+	if step.Stderr == "" {
+		t.Fatal("expected stderr to remain set on a structured failure")
 	}
 }
 

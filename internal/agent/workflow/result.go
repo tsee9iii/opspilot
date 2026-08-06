@@ -29,7 +29,9 @@ type Result struct {
 }
 
 // StepResult captures the execution of a single step. Result holds the raw
-// tool output on success and Error the failure message on failure.
+// tool output on success and Error the failure message on failure. When a step
+// fails with a structured agent.ToolError, ErrorCode, Message and Suggestion
+// carry its machine-readable details.
 type StepResult struct {
 	Name       string          `json:"name"`
 	Tool       string          `json:"tool"`
@@ -39,4 +41,7 @@ type StepResult struct {
 	FinishedAt time.Time       `json:"finished_at"`
 	Result     json.RawMessage `json:"result,omitempty"`
 	Error      string          `json:"error,omitempty"`
+	ErrorCode  string          `json:"error_code,omitempty"`
+	Message    string          `json:"message,omitempty"`
+	Suggestion string          `json:"suggestion,omitempty"`
 }
