@@ -11,6 +11,9 @@ import (
 type Tool interface {
 	Name() string
 	Description() string
+	// Category groups the tool by domain for client reasoning. It is metadata
+	// only: no dispatch or business logic depends on it.
+	Category() string
 	InputSchema() json.RawMessage
 	OutputSchema() json.RawMessage
 	// Call returns the stable JSON result of the tool, or an error. Errors are
@@ -50,6 +53,7 @@ func (ts *ToolSet) Definitions() []toolDefinition {
 		defs = append(defs, toolDefinition{
 			Name:         t.Name(),
 			Description:  t.Description(),
+			Category:     t.Category(),
 			InputSchema:  t.InputSchema(),
 			OutputSchema: t.OutputSchema(),
 		})

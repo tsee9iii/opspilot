@@ -50,6 +50,7 @@ func NewListServersTool(uc *inventory.ListServersUseCase) *ListServersTool {
 
 func (t *ListServersTool) Name() string        { return listServersName }
 func (t *ListServersTool) Description() string { return listServersDescription }
+func (t *ListServersTool) Category() string    { return CategoryInventory }
 func (t *ListServersTool) InputSchema() json.RawMessage {
 	return json.RawMessage(listServersInputSchema)
 }

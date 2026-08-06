@@ -69,10 +69,12 @@ func main() {
 		Commands:              appinventory.NewListCommandsUseCase(inventoryRepo),
 		GetCommand:            getUC,
 		Dispatch:              dispatchUC,
+		Pinger:                pool,
 		DefaultTimeoutSeconds: cfg.MCP.ExecutionTimeoutSeconds,
 	})
 
 	server := mcp.NewServer(toolSet, os.Stdin, os.Stdout)
+	server.SetPinger(pool)
 	zl.Info("mcp server listening on stdio")
 
 	if err := server.Run(ctx); err != nil {

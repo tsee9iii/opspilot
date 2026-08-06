@@ -15,6 +15,7 @@ type Dependencies struct {
 	Commands              *inventory.ListCommandsUseCase
 	GetCommand            *command.GetCommandUseCase
 	Dispatch              *dispatch.DispatchUseCase
+	Pinger                mcp.Pinger
 	DefaultTimeoutSeconds int
 }
 
@@ -30,6 +31,7 @@ func Build(deps Dependencies) *mcp.ToolSet {
 	deploy.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 
 	return mcp.NewToolSet(
+		NewPingTool(deps.Pinger),
 		NewListServersTool(deps.Servers),
 		NewListAgentsTool(deps.Agents),
 		NewListCommandsTool(deps.Commands),

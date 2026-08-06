@@ -60,6 +60,7 @@ func NewGetCommandTool(uc *command.GetCommandUseCase) *GetCommandTool {
 
 func (t *GetCommandTool) Name() string                 { return getCommandName }
 func (t *GetCommandTool) Description() string          { return getCommandDescription }
+func (t *GetCommandTool) Category() string             { return CategoryInventory }
 func (t *GetCommandTool) InputSchema() json.RawMessage { return json.RawMessage(getCommandInputSchema) }
 func (t *GetCommandTool) OutputSchema() json.RawMessage {
 	return json.RawMessage(getCommandOutputSchema)

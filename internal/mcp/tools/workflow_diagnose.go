@@ -59,6 +59,7 @@ func (t *WorkflowDiagnoseTool) SetDefaultTimeoutSeconds(seconds int) {
 
 func (t *WorkflowDiagnoseTool) Name() string        { return workflowDiagnoseName }
 func (t *WorkflowDiagnoseTool) Description() string { return workflowDiagnoseDescription }
+func (t *WorkflowDiagnoseTool) Category() string    { return CategoryDiagnostics }
 func (t *WorkflowDiagnoseTool) InputSchema() json.RawMessage {
 	return json.RawMessage(workflowDiagnoseInputSchema)
 }

@@ -59,6 +59,7 @@ func NewListAgentsTool(uc *inventory.ListAgentsUseCase) *ListAgentsTool {
 
 func (t *ListAgentsTool) Name() string                 { return listAgentsName }
 func (t *ListAgentsTool) Description() string          { return listAgentsDescription }
+func (t *ListAgentsTool) Category() string             { return CategoryInventory }
 func (t *ListAgentsTool) InputSchema() json.RawMessage { return json.RawMessage(listAgentsInputSchema) }
 func (t *ListAgentsTool) OutputSchema() json.RawMessage {
 	return json.RawMessage(listAgentsOutputSchema)

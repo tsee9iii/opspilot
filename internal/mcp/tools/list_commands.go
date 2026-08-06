@@ -58,6 +58,7 @@ func NewListCommandsTool(uc *inventory.ListCommandsUseCase) *ListCommandsTool {
 
 func (t *ListCommandsTool) Name() string        { return listCommandsName }
 func (t *ListCommandsTool) Description() string { return listCommandsDescription }
+func (t *ListCommandsTool) Category() string    { return CategoryInventory }
 func (t *ListCommandsTool) InputSchema() json.RawMessage {
 	return json.RawMessage(listCommandsInputSchema)
 }

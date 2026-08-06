@@ -62,10 +62,21 @@ type callParams struct {
 }
 
 // toolDefinition is the MCP tool listing entry, extended with the stable
-// output schema so clients can reason about the returned JSON shape.
+// output schema and a category so clients can reason about the returned JSON
+// shape and group tools by domain.
+//
+// TODO: future optional metadata fields, added only when a consumer needs
+// them:
+//
+//	tags                  // free-form searchable tags
+//	risk_level            // low | medium | high | destructive
+//	requires_confirmation // bool
+//	destructive           // bool
+//	estimated_duration    // e.g. "30s", "5m"
 type toolDefinition struct {
 	Name         string          `json:"name"`
 	Description  string          `json:"description"`
+	Category     string          `json:"category"`
 	InputSchema  json.RawMessage `json:"inputSchema"`
 	OutputSchema json.RawMessage `json:"outputSchema"`
 }

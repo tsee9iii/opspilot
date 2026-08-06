@@ -21,6 +21,7 @@ func TestBuildDefinesMilestoneTools(t *testing.T) {
 	})
 
 	want := []string{
+		"ping",
 		"list_servers",
 		"list_agents",
 		"list_commands",
@@ -28,6 +29,23 @@ func TestBuildDefinesMilestoneTools(t *testing.T) {
 		"workflow_diagnose",
 		"workflow_deploy",
 	}
+	wantCategory := map[string]string{
+		"ping":              CategorySystem,
+		"list_servers":      CategoryInventory,
+		"list_agents":       CategoryInventory,
+		"list_commands":     CategoryInventory,
+		"get_command":       CategoryInventory,
+		"workflow_diagnose": CategoryDiagnostics,
+		"workflow_deploy":   CategoryDeployment,
+	}
+	validCategory := map[string]bool{
+		CategoryInventory:   true,
+		CategoryWorkflow:    true,
+		CategoryDeployment:  true,
+		CategoryDiagnostics: true,
+		CategorySystem:      true,
+	}
+
 	defs := ts.Definitions()
 	if len(defs) != len(want) {
 		t.Fatalf("expected %d tools, got %d: %v", len(want), len(defs), defs)
@@ -37,6 +55,12 @@ func TestBuildDefinesMilestoneTools(t *testing.T) {
 		seen[def.Name] = true
 		if def.Description == "" || len(def.InputSchema) == 0 || len(def.OutputSchema) == 0 {
 			t.Fatalf("tool %s missing metadata", def.Name)
+		}
+		if !validCategory[def.Category] {
+			t.Fatalf("tool %s has invalid category %q", def.Name, def.Category)
+		}
+		if wantCategory[def.Name] != def.Category {
+			t.Fatalf("tool %s category = %q, want %q", def.Name, def.Category, wantCategory[def.Name])
 		}
 	}
 	for _, name := range want {

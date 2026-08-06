@@ -58,6 +58,7 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		Commands:   appinventory.NewListCommandsUseCase(inventoryRepo),
 		GetCommand: getUC,
 		Dispatch:   dispatchUC,
+		Pinger:     pool,
 	})
 
 	call := func(name string, args map[string]any) callOutput {
@@ -161,6 +162,30 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		}
 		if got.Command["id"] != commandID.String() || got.Command["status"] != "completed" {
 			t.Fatalf("unexpected command: %+v", got.Command)
+		}
+	})
+
+	t.Run("ping reports health against the real database", func(t *testing.T) {
+		res := call("ping", map[string]any{})
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", res.Text)
+		}
+		var got struct {
+			Service        string `json:"service"`
+			Version        string `json:"version"`
+			Protocol       string `json:"protocol"`
+			CentralVersion string `json:"central_version"`
+			Database       string `json:"database"`
+			UptimeSeconds  int64  `json:"uptime_seconds"`
+		}
+		if err := json.Unmarshal([]byte(res.Text), &got); err != nil {
+			t.Fatalf("decode result: %v", err)
+		}
+		if got.Service != "opspilot-mcp" || got.Database != "connected" {
+			t.Fatalf("unexpected health: %+v", got)
+		}
+		if got.Version == "" || got.Protocol == "" || got.CentralVersion == "" || got.UptimeSeconds < 0 {
+			t.Fatalf("incomplete health: %+v", got)
 		}
 	})
 

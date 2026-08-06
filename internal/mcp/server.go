@@ -8,13 +8,17 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"time"
+
+	"github.com/tsee9iii/opspilot/pkg/version"
 )
 
 const (
 	// DefaultServerName identifies the MCP server to clients.
 	DefaultServerName = "opspilot"
-	// DefaultServerVersion is reported in initialize.
-	DefaultServerVersion = "1.0.0"
+	// DefaultServerVersion is reported in initialize. The value lives in
+	// pkg/version so every process reports the same MCP build version.
+	DefaultServerVersion = version.MCP
 	// protocolVersion is the MCP protocol revision this server speaks.
 	protocolVersion = "2025-03-26"
 )
@@ -23,12 +27,14 @@ const (
 // an arbitrary reader/writer pair (os.Stdin/os.Stdout in production, pipes or
 // buffers in tests).
 type Server struct {
-	name    string
-	version string
-	tools   *ToolSet
-	in      io.Reader
-	out     io.Writer
-	log     *slog.Logger
+	name      string
+	version   string
+	tools     *ToolSet
+	in        io.Reader
+	out       io.Writer
+	log       *slog.Logger
+	startedAt time.Time
+	pinger    Pinger
 }
 
 func NewServer(tools *ToolSet, in io.Reader, out io.Writer) *Server {
@@ -37,13 +43,20 @@ func NewServer(tools *ToolSet, in io.Reader, out io.Writer) *Server {
 
 func NewServerWithIdentity(name, version string, tools *ToolSet, in io.Reader, out io.Writer) *Server {
 	return &Server{
-		name:    name,
-		version: version,
-		tools:   tools,
-		in:      in,
-		out:     out,
-		log:     slog.Default(),
+		name:      name,
+		version:   version,
+		tools:     tools,
+		in:        in,
+		out:       out,
+		log:       slog.Default(),
+		startedAt: time.Now(),
 	}
+}
+
+// SetPinger wires the database probe used by the ping health endpoint. When no
+// pinger is set, ping reports the database as disconnected.
+func (s *Server) SetPinger(p Pinger) {
+	s.pinger = p
 }
 
 // SetLogger overrides the logger used for request errors.
@@ -107,7 +120,7 @@ func (s *Server) handle(ctx context.Context, line []byte) []byte {
 	case "initialize":
 		return s.handleInitialize(req)
 	case "ping":
-		return marshal(newResponse(req.ID, json.RawMessage(`{}`)))
+		return s.handlePing(ctx, req)
 	case "tools/list":
 		return s.handleToolsList(req)
 	case "tools/call":
@@ -117,6 +130,11 @@ func (s *Server) handle(ctx context.Context, line []byte) []byte {
 	default:
 		return marshal(newErrorResponse(req.ID, rpcMethodNotFound, "method not found", nil))
 	}
+}
+
+func (s *Server) handlePing(ctx context.Context, req rpcRequest) []byte {
+	result, _ := json.Marshal(BuildHealth(ctx, s.pinger, s.startedAt))
+	return marshal(newResponse(req.ID, result))
 }
 
 func (s *Server) handleInitialize(req rpcRequest) []byte {

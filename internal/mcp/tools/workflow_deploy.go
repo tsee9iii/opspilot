@@ -48,6 +48,7 @@ func (t *WorkflowDeployTool) SetDefaultTimeoutSeconds(seconds int) {
 
 func (t *WorkflowDeployTool) Name() string        { return workflowDeployName }
 func (t *WorkflowDeployTool) Description() string { return workflowDeployDescription }
+func (t *WorkflowDeployTool) Category() string    { return CategoryDeployment }
 func (t *WorkflowDeployTool) InputSchema() json.RawMessage {
 	return json.RawMessage(workflowDeployInputSchema)
 }

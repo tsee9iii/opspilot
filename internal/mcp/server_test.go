@@ -15,6 +15,7 @@ type fakeTool struct {
 
 func (f *fakeTool) Name() string        { return f.name }
 func (f *fakeTool) Description() string { return "fake tool " + f.name }
+func (f *fakeTool) Category() string    { return "system" }
 func (f *fakeTool) InputSchema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{}}`)
 }
@@ -24,6 +25,11 @@ func (f *fakeTool) OutputSchema() json.RawMessage {
 func (f *fakeTool) Call(ctx context.Context, args map[string]any) (json.RawMessage, error) {
 	return f.call(ctx, args)
 }
+
+// fakePinger reports a reachable database.
+type fakePinger struct{}
+
+func (fakePinger) Ping(context.Context) error { return nil }
 
 // runServer feeds newline-delimited JSON-RPC requests and returns the parsed
 // response objects.
@@ -84,8 +90,39 @@ func TestServerPing(t *testing.T) {
 	if len(responses) != 1 {
 		t.Fatalf("expected 1 response, got %d", len(responses))
 	}
-	if _, ok := responses[0]["result"]; !ok {
-		t.Fatalf("expected ping result: %v", responses[0])
+	result, ok := responses[0]["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected ping result object: %v", responses[0])
+	}
+	for _, key := range []string{"service", "version", "protocol", "central_version", "database", "uptime_seconds"} {
+		if _, ok := result[key]; !ok {
+			t.Fatalf("ping missing %s: %v", key, result)
+		}
+	}
+	if result["service"] != ServiceName {
+		t.Fatalf("unexpected service: %v", result["service"])
+	}
+	if result["database"] != DatabaseDisconnected {
+		t.Fatalf("expected disconnected without a pinger, got %v", result["database"])
+	}
+}
+
+func TestServerPingReportsDatabaseStatus(t *testing.T) {
+	var out bytes.Buffer
+	srv := NewServer(NewToolSet(), strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`+"\n"), &out)
+	srv.SetPinger(fakePinger{})
+
+	if err := srv.Run(context.Background()); err != nil {
+		t.Fatalf("server run: %v", err)
+	}
+	var resp struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &resp); err != nil {
+		t.Fatalf("decode ping response: %v", err)
+	}
+	if resp.Result["database"] != DatabaseConnected {
+		t.Fatalf("expected connected, got %v", resp.Result["database"])
 	}
 }
 
@@ -105,7 +142,7 @@ func TestServerToolsList(t *testing.T) {
 		t.Fatalf("expected 2 tools, got %d", len(list))
 	}
 	first := list[0].(map[string]any)
-	for _, key := range []string{"name", "description", "inputSchema", "outputSchema"} {
+	for _, key := range []string{"name", "description", "category", "inputSchema", "outputSchema"} {
 		if _, ok := first[key]; !ok {
 			t.Fatalf("tool missing %s: %v", key, first)
 		}
