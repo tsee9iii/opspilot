@@ -3,8 +3,6 @@ package workflow
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"time"
 
 	"github.com/tsee9iii/opspilot/internal/agent"
 	"github.com/tsee9iii/opspilot/internal/agent/project"
@@ -16,33 +14,13 @@ import (
 const DiagnoseWorkflowVersion = "1.0.0"
 
 // DiagnoseReport is the JSON report produced by the host diagnostic workflow.
-type DiagnoseReport struct {
-	Workflow     string         `json:"workflow"`
-	Version      string         `json:"version"`
-	AgentVersion string         `json:"agent_version"`
-	Hostname     string         `json:"hostname"`
-	Status       string         `json:"status"`
-	StartedAt    time.Time      `json:"started_at"`
-	CompletedAt  time.Time      `json:"completed_at"`
-	DurationMS   int64          `json:"duration_ms"`
-	Steps        []DiagnoseStep `json:"steps"`
-}
+// It is an alias for the shared Report shape so clients can keep using the
+// diagnostic-specific name.
+type DiagnoseReport = Report
 
-// DiagnoseStep captures the outcome of one host diagnostic step. Stdout and
-// Stderr carry the raw command output for tools that emit CommandResult-shaped
-// results; structured tools contribute their JSON output as Stdout. On failure
-// Stderr carries the step error; when the step failed with a structured tool
-// error, ErrorCode, Message and Suggestion carry its machine-readable details.
-type DiagnoseStep struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	DurationMS int64  `json:"duration_ms"`
-	Stdout     string `json:"stdout"`
-	Stderr     string `json:"stderr"`
-	ErrorCode  string `json:"error_code,omitempty"`
-	Message    string `json:"message,omitempty"`
-	Suggestion string `json:"suggestion,omitempty"`
-}
+// DiagnoseStep captures the outcome of one workflow step. It is an alias for
+// the shared ReportStep shape.
+type DiagnoseStep = ReportStep
 
 // BuildHostDiagnoseWorkflow builds the host-level diagnostic workflow: it runs
 // the registered system and container capabilities in order and, when a
@@ -75,70 +53,4 @@ func BuildHostDiagnoseWorkflow(service string) Workflow {
 func RunHostDiagnose(ctx context.Context, executor agent.Executor, service, agentVersion string) DiagnoseReport {
 	res := NewExecutor(executor).StopOnFailure(false).Execute(ctx, project.Project{}, BuildHostDiagnoseWorkflow(service))
 	return reportFromResult(res, agentVersion)
-}
-
-// reportFromResult converts the workflow executor's Result into the Diagnose
-// report shape. The workflow status is "completed" when at least one step
-// completed; it is "failed" only when no step completed at all.
-func reportFromResult(res Result, agentVersion string) DiagnoseReport {
-	status := "completed"
-	if !res.Success {
-		status = "failed"
-	}
-	hostname, _ := os.Hostname()
-	steps := make([]DiagnoseStep, 0, len(res.Steps))
-	for _, sr := range res.Steps {
-		steps = append(steps, diagnoseStepFromResult(sr))
-	}
-	return DiagnoseReport{
-		Workflow:     res.Workflow,
-		Version:      DiagnoseWorkflowVersion,
-		AgentVersion: agentVersion,
-		Hostname:     hostname,
-		Status:       status,
-		StartedAt:    res.StartedAt,
-		CompletedAt:  res.FinishedAt,
-		DurationMS:   res.FinishedAt.Sub(res.StartedAt).Milliseconds(),
-		Steps:        steps,
-	}
-}
-
-func diagnoseStepFromResult(sr StepResult) DiagnoseStep {
-	step := DiagnoseStep{
-		Name:       sr.Name,
-		Status:     string(sr.Status),
-		DurationMS: sr.FinishedAt.Sub(sr.StartedAt).Milliseconds(),
-	}
-	switch sr.Status {
-	case StepFailed:
-		step.Stderr = sr.Error
-		step.ErrorCode = sr.ErrorCode
-		step.Message = sr.Message
-		step.Suggestion = sr.Suggestion
-	case StepCompleted:
-		step.Stdout, step.Stderr = splitCommandOutput(sr.Result)
-	}
-	return step
-}
-
-// splitCommandOutput returns the raw stdout/stderr of a completed step. Tools
-// that emit CommandResult-shaped output contribute their stdout and stderr
-// directly; structured tools contribute their JSON output as stdout so no
-// result data is dropped.
-func splitCommandOutput(result json.RawMessage) (string, string) {
-	if len(result) == 0 {
-		return "", ""
-	}
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(result, &keys); err != nil {
-		return "", ""
-	}
-	if _, ok := keys["stdout"]; !ok {
-		return string(result), ""
-	}
-	var cr agent.CommandResult
-	if err := json.Unmarshal(result, &cr); err != nil {
-		return "", ""
-	}
-	return cr.Stdout, cr.Stderr
 }

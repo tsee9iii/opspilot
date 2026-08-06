@@ -15,9 +15,32 @@ execution_policy:
   working_directory: ""
 
 # Optional project profiles (configuration and discovery only — no tool is
-# executed from here). Each project needs a unique name, an absolute repository
-# path, and "restart" and "logs" tool references; health_url is optional.
+# executed from here). Each project needs a unique name and an absolute path.
+# A project deploys either with a legacy "restart"/"logs" tool pair (git.pull
+# + restart + health) or with a deploy strategy selected by deploy.type
+# (docker-compose, pm2, or script); health.url is optional.
 # projects:
+#   - name: central
+#     path: /opt/opspilot
+#     deploy:
+#       type: docker-compose
+#       compose_file: docker-compose.yml
+#     health:
+#       url: http://127.0.0.1:9090/healthz
+#   - name: merchant-api
+#     path: /srv/merchant-api
+#     deploy:
+#       type: pm2
+#       process: merchant-api
+#     health:
+#       url: http://127.0.0.1:3000/health
+#   - name: billing
+#     path: /srv/billing
+#     deploy:
+#       type: script
+#       script: ./deploy.sh
+#     health:
+#       url: http://127.0.0.1:8080/health
 #   - name: backend
 #     repository: /srv/backend
 #     health_url: http://localhost:3000/health

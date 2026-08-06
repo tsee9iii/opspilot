@@ -11,6 +11,7 @@ type Project struct {
 	Name       string
 	Repository string
 	HealthURL  *string
+	Deploy     *DeployConfig
 	Tools      map[string]ToolReference
 }
 

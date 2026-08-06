@@ -267,3 +267,143 @@ func assertParams(t *testing.T, got json.RawMessage, want string) {
 		t.Fatalf("unexpected parameters: %s, want %s", got, want)
 	}
 }
+
+func TestNewDeployStrategyConfig(t *testing.T) {
+	cfg := Config{
+		Name:   "central",
+		Path:   "/opt/opspilot",
+		Health: &HealthConfig{URL: strPtr("http://127.0.0.1:9090/healthz")},
+		Deploy: &DeployConfig{Type: "docker-compose", ComposeFile: "docker-compose.yml"},
+	}
+	l, err := New([]Config{cfg})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	p := l.projects[0]
+	if p.Repository != "/opt/opspilot" {
+		t.Fatalf("unexpected repository: %s", p.Repository)
+	}
+	if p.HealthURL == nil || *p.HealthURL != "http://127.0.0.1:9090/healthz" {
+		t.Fatalf("unexpected health URL: %v", p.HealthURL)
+	}
+	if p.Deploy == nil || p.Deploy.Type != "docker-compose" || p.Deploy.ComposeFile != "docker-compose.yml" {
+		t.Fatalf("unexpected deploy config: %+v", p.Deploy)
+	}
+}
+
+func TestNewDeployStrategyAliasesLegacyFields(t *testing.T) {
+	cfg := Config{
+		Name:       "central",
+		Repository: "/opt/opspilot",
+		HealthURL:  strPtr("http://127.0.0.1:9090/healthz"),
+		Deploy:     &DeployConfig{Type: "docker-compose", ComposeFile: "docker-compose.yml"},
+	}
+	l, err := New([]Config{cfg})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	p := l.projects[0]
+	if p.Repository != "/opt/opspilot" {
+		t.Fatalf("unexpected repository: %s", p.Repository)
+	}
+	if p.HealthURL == nil || *p.HealthURL != "http://127.0.0.1:9090/healthz" {
+		t.Fatalf("unexpected health URL: %v", p.HealthURL)
+	}
+}
+
+func TestNewDeployStrategyDoesNotRequireTools(t *testing.T) {
+	cfg := Config{
+		Name:   "billing",
+		Path:   "/srv/billing",
+		Deploy: &DeployConfig{Type: "script", Script: "./deploy.sh"},
+	}
+	if _, err := New([]Config{cfg}); err != nil {
+		t.Fatalf("deploy projects must not require restart/logs tools: %v", err)
+	}
+}
+
+func TestNewDeployWithToolsAllowed(t *testing.T) {
+	cfg := Config{
+		Name:   "central",
+		Path:   "/opt/opspilot",
+		Deploy: &DeployConfig{Type: "docker-compose", ComposeFile: "docker-compose.yml"},
+		Tools: map[string]ToolConfig{
+			"restart": {Tool: "docker.restart", Params: map[string]any{"container": "central"}},
+			"logs":    {Tool: "docker.logs", Params: map[string]any{"container": "central"}},
+		},
+	}
+	if _, err := New([]Config{cfg}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewDeployTypeRequired(t *testing.T) {
+	cfg := Config{Name: "x", Path: "/srv/x", Deploy: &DeployConfig{}}
+	_, err := New([]Config{cfg})
+	if err == nil {
+		t.Fatal("expected error for missing deploy.type")
+	}
+	if !strings.Contains(err.Error(), "deploy.type is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewDeployMissingStrategyParams(t *testing.T) {
+	cases := []struct {
+		cfg  Config
+		want string
+	}{
+		{
+			cfg:  Config{Name: "x", Path: "/srv/x", Deploy: &DeployConfig{Type: "docker-compose"}},
+			want: "deploy.compose_file is required",
+		},
+		{
+			cfg:  Config{Name: "x", Path: "/srv/x", Deploy: &DeployConfig{Type: "pm2"}},
+			want: "deploy.process is required",
+		},
+		{
+			cfg:  Config{Name: "x", Path: "/srv/x", Deploy: &DeployConfig{Type: "script"}},
+			want: "deploy.script is required",
+		},
+	}
+	for _, tc := range cases {
+		_, err := New([]Config{tc.cfg})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Fatalf("type %s: expected error containing %q, got %v", tc.cfg.Deploy.Type, tc.want, err)
+		}
+	}
+}
+
+func TestNewDeployUnknownTypeAllowed(t *testing.T) {
+	cfg := Config{Name: "edge", Path: "/srv/edge", Deploy: &DeployConfig{Type: "kustomize"}}
+	if _, err := New([]Config{cfg}); err != nil {
+		t.Fatalf("unknown deploy types must pass loader validation: %v", err)
+	}
+}
+
+func TestNewDeployRelativePath(t *testing.T) {
+	cfg := Config{Name: "x", Path: "srv/x", Deploy: &DeployConfig{Type: "pm2", Process: "x"}}
+	_, err := New([]Config{cfg})
+	if err == nil {
+		t.Fatal("expected error for relative path")
+	}
+	if !strings.Contains(err.Error(), "repository must be an absolute path") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNewDeployInvalidHealthURL(t *testing.T) {
+	cfg := Config{
+		Name:   "x",
+		Path:   "/srv/x",
+		Health: &HealthConfig{URL: strPtr("not-a-url")},
+		Deploy: &DeployConfig{Type: "pm2", Process: "x"},
+	}
+	_, err := New([]Config{cfg})
+	if err == nil {
+		t.Fatal("expected error for invalid health URL")
+	}
+	if !strings.Contains(err.Error(), "invalid health URL") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

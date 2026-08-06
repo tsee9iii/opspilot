@@ -305,3 +305,116 @@ func TestResultJSONShape(t *testing.T) {
 		t.Fatalf("unexpected result JSON: %s", out)
 	}
 }
+
+func threeStepWorkflow() Workflow {
+	return NewWorkflow("deploy",
+		Step{Name: "a", Tool: project.ToolReference{Tool: "a"}},
+		Step{Name: "b", Tool: project.ToolReference{Tool: "b"}},
+		Step{Name: "c", Tool: project.ToolReference{Tool: "c"}},
+	)
+}
+
+func TestExecuteAbortWhen(t *testing.T) {
+	p := loadTestProject(t, nil)
+	fe := newFakeExecutor()
+	fe.ok("a")
+	fe.ok("b")
+	fe.ok("c")
+	ex := NewExecutor(fe).AbortWhen(func(sr StepResult) bool {
+		return sr.Name == "a"
+	})
+	res := ex.Execute(context.Background(), p, threeStepWorkflow())
+
+	if res.Success {
+		t.Fatal("expected abort to fail the workflow")
+	}
+	if len(fe.tools) != 1 || fe.tools[0] != "a" {
+		t.Fatalf("expected only step a to run: %v", fe.tools)
+	}
+	if len(res.Steps) != 3 {
+		t.Fatalf("expected 3 step results, got %d", len(res.Steps))
+	}
+	if res.Steps[0].Status != StepCompleted {
+		t.Fatalf("aborted step should stay completed: %+v", res.Steps[0])
+	}
+	if res.Steps[1].Status != StepSkipped || res.Steps[2].Status != StepSkipped {
+		t.Fatalf("expected remaining steps skipped: %+v", res.Steps)
+	}
+}
+
+func TestExecuteAbortWhenNoMatch(t *testing.T) {
+	p := loadTestProject(t, nil)
+	fe := newFakeExecutor()
+	fe.ok("a")
+	fe.ok("b")
+	fe.ok("c")
+	ex := NewExecutor(fe).AbortWhen(func(sr StepResult) bool {
+		return sr.Name == "does-not-exist"
+	})
+	res := ex.Execute(context.Background(), p, threeStepWorkflow())
+
+	if !res.Success {
+		t.Fatal("expected success when the predicate never matches")
+	}
+	if len(fe.tools) != 3 {
+		t.Fatalf("expected all steps to run: %v", fe.tools)
+	}
+}
+
+func TestExecuteFailWhen(t *testing.T) {
+	p := loadTestProject(t, nil)
+	fe := newFakeExecutor()
+	fe.ok("a")
+	fe.ok("b")
+	fe.ok("c")
+	ex := NewExecutor(fe).FailWhen(func(sr StepResult) (bool, string) {
+		if sr.Name == "b" {
+			return true, "boom"
+		}
+		return false, ""
+	})
+	res := ex.Execute(context.Background(), p, threeStepWorkflow())
+
+	if res.Success {
+		t.Fatal("expected failure")
+	}
+	if len(fe.tools) != 2 {
+		t.Fatalf("expected steps a and b to run: %v", fe.tools)
+	}
+	if len(res.Steps) != 3 {
+		t.Fatalf("expected 3 step results, got %d", len(res.Steps))
+	}
+	if res.Steps[0].Status != StepCompleted {
+		t.Fatalf("expected step a completed: %+v", res.Steps[0])
+	}
+	if res.Steps[1].Status != StepFailed || res.Steps[1].Error != "boom" {
+		t.Fatalf("expected step b failed with reason: %+v", res.Steps[1])
+	}
+	if res.Steps[2].Status != StepSkipped {
+		t.Fatalf("expected step c skipped: %+v", res.Steps[2])
+	}
+}
+
+func TestExecuteFailWhenNoMatch(t *testing.T) {
+	p := loadTestProject(t, nil)
+	fe := newFakeExecutor()
+	fe.ok("a")
+	fe.ok("b")
+	fe.ok("c")
+	ex := NewExecutor(fe).FailWhen(func(sr StepResult) (bool, string) {
+		return false, ""
+	})
+	res := ex.Execute(context.Background(), p, threeStepWorkflow())
+
+	if !res.Success {
+		t.Fatal("expected success when the predicate never matches")
+	}
+	if len(fe.tools) != 3 {
+		t.Fatalf("expected all steps to run: %v", fe.tools)
+	}
+	for _, sr := range res.Steps {
+		if sr.Status != StepCompleted {
+			t.Fatalf("expected all steps completed: %+v", res.Steps)
+		}
+	}
+}

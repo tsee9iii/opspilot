@@ -83,6 +83,12 @@ func (c *Config) Projects() []project.Project {
 	return c.profiles.Projects()
 }
 
+// Profiles returns the loaded project loader. It is always non-nil after
+// LoadConfig, even when no projects are configured.
+func (c *Config) Profiles() *project.Loader {
+	return c.profiles
+}
+
 // FindProject returns the project profile with the given name.
 func (c *Config) FindProject(name string) (project.Project, bool) {
 	if c.profiles == nil {

@@ -10,6 +10,8 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/tsee9iii/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent/deploy"
+	deploytools "github.com/tsee9iii/opspilot/internal/agent/tools/deploy"
 	"github.com/tsee9iii/opspilot/internal/agent/tools/diagnose"
 	"github.com/tsee9iii/opspilot/internal/agent/tools/docker"
 	"github.com/tsee9iii/opspilot/internal/agent/tools/git"
@@ -71,6 +73,14 @@ func main() {
 
 	exec := agent.NewRegistryExecutor(registry, agentCfg.Policy())
 	registry.Register(diagnose.NewDiagnoseTool(exec, agentCfg.Version))
+
+	strategies := deploy.NewRegistry()
+	strategies.Register(deploy.NewDockerComposeStrategy())
+	strategies.Register(deploy.NewPM2Strategy())
+	strategies.Register(deploy.NewScriptStrategy())
+
+	registry.Register(deploytools.NewDeployProjectTool(agentCfg.Profiles(), strategies))
+	registry.Register(deploytools.NewDeployTool(exec, agentCfg.Profiles(), agentCfg.Version))
 
 	a := agent.New(agentCfg, zl, exec, registry)
 

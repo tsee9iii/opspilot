@@ -17,6 +17,8 @@ type Executor struct {
 	executor      agent.Executor
 	stopOnFailure bool
 	onStep        func(step string, status StepStatus)
+	abortWhen     func(sr StepResult) bool
+	failWhen      func(sr StepResult) (bool, string)
 }
 
 func NewExecutor(executor agent.Executor) *Executor {
@@ -29,6 +31,27 @@ func NewExecutor(executor agent.Executor) *Executor {
 // chaining.
 func (e *Executor) StopOnFailure(stop bool) *Executor {
 	e.stopOnFailure = stop
+	return e
+}
+
+// AbortWhen registers a predicate evaluated after every completed step. When
+// it returns true, the completed step stays recorded but execution stops: the
+// current step remains completed, every remaining step is marked skipped, and
+// the workflow is treated as failed. It is used by deploy workflows to refuse
+// a deployment when the repository is dirty. Returns the executor for
+// chaining.
+func (e *Executor) AbortWhen(fn func(sr StepResult) bool) *Executor {
+	e.abortWhen = fn
+	return e
+}
+
+// FailWhen registers a predicate evaluated after every completed step. When it
+// returns true, the step is re-marked as failed with the returned reason and
+// execution stops with the remaining steps skipped. It is used by deploy
+// workflows to fail when the health check reports an unhealthy service.
+// Returns the executor for chaining.
+func (e *Executor) FailWhen(fn func(sr StepResult) (bool, string)) *Executor {
+	e.failWhen = fn
 	return e
 }
 
@@ -83,15 +106,7 @@ func (e *Executor) Execute(ctx context.Context, p project.Project, wf Workflow) 
 			res.Steps = append(res.Steps, sr)
 			failed = true
 			if stop {
-				for _, rem := range wf.Steps[i+1:] {
-					skipped := StepResult{
-						Name:   rem.Name,
-						Tool:   rem.Tool.Tool,
-						Status: StepSkipped,
-					}
-					e.emit(rem.Name, skipped.Status)
-					res.Steps = append(res.Steps, skipped)
-				}
+				res = e.markSkipped(res, wf.Steps[i+1:])
 				break
 			}
 			continue
@@ -103,6 +118,25 @@ func (e *Executor) Execute(ctx context.Context, p project.Project, wf Workflow) 
 		e.emit(step.Name, sr.Status)
 		res.Steps = append(res.Steps, sr)
 		completed++
+
+		if e.abortWhen != nil && e.abortWhen(sr) {
+			failed = true
+			res = e.markSkipped(res, wf.Steps[i+1:])
+			break
+		}
+		if e.failWhen != nil {
+			if should, reason := e.failWhen(sr); should {
+				sr.Status = StepFailed
+				sr.Error = reason
+				sr.FinishedAt = time.Now()
+				e.emit(sr.Name, sr.Status)
+				res.Steps[len(res.Steps)-1] = sr
+				completed--
+				failed = true
+				res = e.markSkipped(res, wf.Steps[i+1:])
+				break
+			}
+		}
 	}
 
 	res.FinishedAt = time.Now()
@@ -110,6 +144,21 @@ func (e *Executor) Execute(ctx context.Context, p project.Project, wf Workflow) 
 		res.Success = !failed
 	} else {
 		res.Success = completed > 0
+	}
+	return res
+}
+
+// markSkipped appends every remaining step as skipped and returns the updated
+// result.
+func (e *Executor) markSkipped(res Result, remaining []Step) Result {
+	for _, rem := range remaining {
+		skipped := StepResult{
+			Name:   rem.Name,
+			Tool:   rem.Tool.Tool,
+			Status: StepSkipped,
+		}
+		e.emit(rem.Name, skipped.Status)
+		res.Steps = append(res.Steps, skipped)
 	}
 	return res
 }
