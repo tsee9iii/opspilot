@@ -1,6 +1,6 @@
 -- name: GetAgentByID :one
--- Fetch an agent by id, including the stored secret hash for verification.
-SELECT id, server_id, secret, version, status, last_heartbeat, created_at, updated_at
+-- Fetch an agent by id, including its stored secret hash and signing key.
+SELECT id, server_id, secret, signing_key, version, status, last_heartbeat, created_at, updated_at
 FROM agents
 WHERE id = sqlc.arg('id');
 

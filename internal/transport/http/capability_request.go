@@ -4,7 +4,6 @@ import "encoding/json"
 
 type SyncCapabilitiesRequest struct {
 	AgentID      string          `json:"agent_id"`
-	Secret       string          `json:"secret"`
 	Capabilities []CapabilityDTO `json:"capabilities"`
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -50,6 +51,19 @@ func (r *CommandRepository) LeaseNextCommand(ctx context.Context, req appcommand
 	agentID, err := uuid.Parse(req.AgentID)
 	if err != nil {
 		return appcommand.LeaseCommandResponse{}, fmt.Errorf("postgres: parse agent id: %w", err)
+	}
+
+	// Lazy lease expiry: before claiming a new command, return any of this
+	// agent's leases that outlived the TTL back to pending. No scheduler runs
+	// in the background; an abandoned lease is reclaimed only when the agent
+	// leases again.
+	if req.LeaseTTL > 0 {
+		if err := r.q.ExpireStaleLeases(ctx, postgresql.ExpireStaleLeasesParams{
+			LeaseOwner: pgtype.Text{String: agentID.String(), Valid: true},
+			Before:     pgtype.Timestamptz{Time: time.Now().Add(-req.LeaseTTL), Valid: true},
+		}); err != nil {
+			return appcommand.LeaseCommandResponse{}, fmt.Errorf("postgres: expire stale leases: %w", err)
+		}
 	}
 
 	row, err := r.q.LeaseNextCommand(ctx, postgresql.LeaseNextCommandParams{

@@ -11,14 +11,10 @@ import (
 
 const DefaultHeartbeatInterval = 30 * time.Second
 
-var (
-	ErrAgentNotFound       = errors.New("agent not found")
-	ErrAgentSecretMismatch = errors.New("agent secret mismatch")
-)
+var ErrAgentNotFound = errors.New("agent not found")
 
 type HeartbeatRequest struct {
 	AgentID string
-	Secret  string
 }
 
 type HeartbeatResponse struct {
@@ -26,17 +22,16 @@ type HeartbeatResponse struct {
 }
 
 type HeartbeatUseCase struct {
-	agents  Repository
-	secretH SecretHasher
+	agents Repository
 }
 
-func NewHeartbeatUseCase(agents Repository, secretH SecretHasher) *HeartbeatUseCase {
-	return &HeartbeatUseCase{
-		agents:  agents,
-		secretH: secretH,
-	}
+func NewHeartbeatUseCase(agents Repository) *HeartbeatUseCase {
+	return &HeartbeatUseCase{agents: agents}
 }
 
+// Heartbeat records the agent's last heartbeat. Identity is established by the
+// transport middleware (HMAC request signing); this use case only performs the
+// lifecycle transition and timestamp update.
 func (uc *HeartbeatUseCase) Heartbeat(ctx context.Context, req HeartbeatRequest) (HeartbeatResponse, error) {
 	id, err := uuid.Parse(req.AgentID)
 	if err != nil {
@@ -49,14 +44,6 @@ func (uc *HeartbeatUseCase) Heartbeat(ctx context.Context, req HeartbeatRequest)
 			return HeartbeatResponse{}, ErrAgentNotFound
 		}
 		return HeartbeatResponse{}, fmt.Errorf("agent: get agent: %w", err)
-	}
-
-	ok, err := uc.secretH.Verify(ctx, ag.Secret, req.Secret)
-	if err != nil {
-		return HeartbeatResponse{}, fmt.Errorf("agent: verify secret: %w", err)
-	}
-	if !ok {
-		return HeartbeatResponse{}, ErrAgentSecretMismatch
 	}
 
 	if ag.Status == StatusUnregistered {

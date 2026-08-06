@@ -4,9 +4,16 @@
 #
 # Downloads the latest released opspilot-agent binary from GitHub Releases,
 # registers the agent with a Central server using the existing registration
-# endpoint, persists the returned credentials into /etc/opspilot/agent.yaml,
-# installs it as a systemd service, and verifies by polling the heartbeat
-# endpoint.
+# endpoint, persists the returned credentials (agent_id, signing_key) into
+# /etc/opspilot/agent.yaml, installs it as a systemd service, and verifies by
+# polling the heartbeat and lease endpoints with HMAC-signed requests.
+#
+# Authenticated agent requests are signed with the agent's per-agent signing
+# key (issued by Central at registration) using the shared HMAC protocol in
+# internal/agentsign: HMAC-SHA256 over
+#   agent_id "\n" timestamp "\n" nonce "\n" method "\n" path "\n" body
+# sent via the X-Agent-Id / X-Agent-Timestamp / X-Agent-Nonce /
+# X-Agent-Signature headers. Requires openssl for the HMAC computation.
 #
 # The installation is idempotent: an already-registered agent is never
 # overwritten unless the operator explicitly re-registers.
@@ -111,15 +118,64 @@ yaml_set_nested() {
 # json_quote STRING -> a JSON string literal (escapes backslash and quote).
 json_quote() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
 
-# http_code URL BODYFILE OUT -> curl exit code via a var, prints HTTP status to
-# $workdir/status. Uses --data-binary @file so secrets never appear in argv.
+# rand_hex NBYTES -> prints N random bytes as lowercase hex.
+rand_hex() {
+  if command -v openssl >/dev/null 2>&1; then
+    openssl rand -hex "$1"
+  else
+    od -An -N"$1" -tx1 /dev/urandom | tr -d ' \n'
+  fi
+}
+
+# http_code OUT_FILE URL BODY_FILE [HEADER...] -> prints the HTTP status to
+# stdout. Uses --data-binary @file so secrets never appear in argv.
 http_code() {
-  curl -sS -o "$1" -w '%{http_code}' -X POST "$2" \
-    -H 'Content-Type: application/json' --data-binary "@$3"
+  local out="$1" url="$2" body="$3" h
+  shift 3
+  local args=(-sS -o "$out" -w '%{http_code}' -X POST "$url" \
+    -H 'Content-Type: application/json' --data-binary "@$body")
+  for h in "$@"; do args+=(-H "$h"); done
+  curl "${args[@]}"
 }
 
 # echo body to file without exposing it in the command line.
 req_file() { printf '%s' "$1" > "$2"; chmod 0600 "$2"; }
+
+# sign_agent_request AGENT_ID SIGNING_KEY METHOD PATH BODY_FILE
+# Computes the HMAC request-signing headers for a single agent request,
+# following internal/agentsign exactly (canonical string, header names,
+# Unix-second timestamp, 16-byte hex nonce). Results are exported through the
+# global AGENT_TS / AGENT_NONCE / AGENT_SIGNATURE variables. BODY_FILE must be
+# a file (not a here-string) so the signed bytes match the bytes curl sends.
+#
+# The signing key is used as its literal string bytes (HMAC key), matching the
+# Go agent's agentsign.Sign. Requires openssl for the HMAC-SHA256 computation.
+sign_agent_request() {
+  local agent_id="$1" key="$2" method="$3" path="$4" body_file="$5" body canonical
+  command -v openssl >/dev/null 2>&1 || die "openssl is required for HMAC request signing"
+  body="$(<"$body_file")"
+  AGENT_TS="$(date +%s)"
+  AGENT_NONCE="$(rand_hex 16)"
+  canonical="$(printf '%s\n%s\n%s\n%s\n%s\n%s' \
+    "$agent_id" "$AGENT_TS" "$AGENT_NONCE" "$method" "$path" "$body")"
+  AGENT_SIGNATURE="$(printf '%s' "$canonical" | openssl dgst -sha256 -mac HMAC -macopt "key:$key" 2>/dev/null | awk '{print $NF}')"
+  [[ -n "$AGENT_SIGNATURE" ]] || die "failed to compute request signature (is openssl working?)"
+}
+
+# agent_post OUT_FILE URL BODY_FILE METHOD PATH -> signs a request with the
+# current agent identity (global AGENT_ID/SIGNING_KEY) and POSTs it, printing
+# the HTTP status code. Intended for `code="$(agent_post ... || true)"`.
+# The signature covers method + path + body exactly, matching the production
+# agent.
+agent_post() {
+  local out="$1" url="$2" body_file="$3" method="$4" path="$5"
+  sign_agent_request "$AGENT_ID" "$SIGNING_KEY" "$method" "$path" "$body_file"
+  http_code "$out" "$url" "$body_file" \
+    "X-Agent-Id: ${AGENT_ID}" \
+    "X-Agent-Timestamp: ${AGENT_TS}" \
+    "X-Agent-Nonce: ${AGENT_NONCE}" \
+    "X-Agent-Signature: ${AGENT_SIGNATURE}"
+}
 
 # --- platform detection -------------------------------------------------------
 
@@ -240,11 +296,7 @@ if [[ "$REGISTER" == true ]]; then
   VERSION="${existing_version:-0.1.0}"
 
   # --- generate a cryptographically secure secret ------------------------------
-  if command -v openssl >/dev/null 2>&1; then
-    SECRET="$(openssl rand -hex 32)"
-  else
-    SECRET="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
-  fi
+  SECRET="$(rand_hex 32)"
 
   # --- register with Central ----------------------------------------------------
   register_url="${CENTRAL_URL%/}/api/v1/agents/register"
@@ -263,12 +315,16 @@ if [[ "$REGISTER" == true ]]; then
   AGENT_ID="$(sed -n 's/.*"agent_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$workdir/reg.json" | head -n 1)"
   [[ -n "$AGENT_ID" ]] || die "registration response did not include agent_id"
 
+  SIGNING_KEY="$(sed -n 's/.*"signing_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$workdir/reg.json" | head -n 1)"
+  [[ -n "$SIGNING_KEY" ]] || die "registration response did not include signing_key"
+
   # --- persist config (installer-owned fields only) ------------------------------
   if [[ ! -f "$CONFIG_PATH" ]]; then
     log "creating ${CONFIG_PATH}"
     req_file "central_url: ${CENTRAL_URL}
 registration_token: ${REGISTRATION_TOKEN}
 secret: ${SECRET}
+signing_key: ${SIGNING_KEY}
 version: ${VERSION}
 server:
   hostname: ${HOSTNAME}
@@ -281,6 +337,7 @@ poll_interval: 5
     yaml_set_top central_url "$CENTRAL_URL"
     yaml_set_top registration_token "$REGISTRATION_TOKEN"
     yaml_set_top secret "$SECRET"
+    yaml_set_top signing_key "$SIGNING_KEY"
     yaml_set_top agent_id "$AGENT_ID"
     yaml_set_top version "$VERSION"
     [[ -n "$(yaml_get_nested server hostname)" ]] || yaml_set_nested server hostname "$HOSTNAME"
@@ -293,6 +350,7 @@ else
   CENTRAL_URL="$(yaml_get_top central_url)"
   AGENT_ID="$(yaml_get_top agent_id)"
   SECRET="$(yaml_get_top secret)"
+  SIGNING_KEY="$(yaml_get_top signing_key)"
 fi
 
 chown opspilot:opspilot "$CONFIG_DIR" "$CONFIG_PATH" || true
@@ -326,17 +384,27 @@ log "opspilot-agent service enabled and started"
 
 # --- verification ---------------------------------------------------------------
 
-if [[ -n "${CENTRAL_URL:-}" && -n "${AGENT_ID:-}" && -n "${SECRET:-}" ]]; then
+if [[ -n "${CENTRAL_URL:-}" && -n "${AGENT_ID:-}" && -n "${SIGNING_KEY:-}" ]]; then
+  log "verifying agent authentication (HMAC signing)"
   hb_url="${CENTRAL_URL%/}/api/v1/agents/heartbeat"
-  req_file "$(printf '{"agent_id":"%s","secret":"%s"}' "$(json_quote "$AGENT_ID")" "$(json_quote "$SECRET")")" "$workdir/hb-body.json"
+  req_file "$(printf '{"agent_id":"%s"}' "$(json_quote "$AGENT_ID")")" "$workdir/hb-body.json"
+  lease_url="${CENTRAL_URL%/}/api/v1/commands/lease"
+  req_file "$(printf '{"agent_id":"%s"}' "$(json_quote "$AGENT_ID")")" "$workdir/lease-body.json"
+
   healthy=0
   for _ in 1 2 3 4 5; do
-    hb_code="$(http_code "$workdir/hb.json" "$hb_url" "$workdir/hb-body.json" || true)"
+    hb_code="$(agent_post "$workdir/hb.json" "$hb_url" "$workdir/hb-body.json" "POST" "/api/v1/agents/heartbeat" || true)"
     if [[ "$hb_code" == "200" ]]; then healthy=1; break; fi
     sleep 1
   done
   if [[ "$healthy" == "1" ]]; then
     log "agent heartbeat verified"
+    lease_code="$(agent_post "$workdir/lease.json" "$lease_url" "$workdir/lease-body.json" "POST" "/api/v1/commands/lease" || true)"
+    if [[ "$lease_code" == "200" || "$lease_code" == "204" ]]; then
+      log "agent lease verified"
+    else
+      log "warning: heartbeat verified but lease request returned HTTP ${lease_code}"
+    fi
   else
     echo "---- systemctl status opspilot-agent ----" >&2
     systemctl status "$SERVICE_NAME" --no-pager 2>&1 || true
@@ -348,8 +416,10 @@ if [[ -n "${CENTRAL_URL:-}" && -n "${AGENT_ID:-}" && -n "${SECRET:-}" ]]; then
       log "warning: agent did not confirm heartbeat; see status above (existing agent left as-is)"
     fi
   fi
+elif [[ -n "${CENTRAL_URL:-}" && -n "${AGENT_ID:-}" ]]; then
+  log "warning: no signing_key in config; skipping HMAC verification (re-register the agent to obtain a signing key)"
 else
-  log "skipping heartbeat verification (no central_url/agent_id in config)"
+  log "skipping verification (no central_url/agent_id in config)"
 fi
 
 cat <<'EOF'

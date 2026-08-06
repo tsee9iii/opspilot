@@ -28,7 +28,6 @@ type Capability struct {
 
 type SyncRequest struct {
 	AgentID      string
-	Secret       string
 	Capabilities []Capability
 }
 
@@ -37,7 +36,7 @@ type SyncResponse struct {
 }
 
 // AgentRepository is the subset of the agent persistence contract needed to
-// authenticate a capability sync.
+// authorise a capability sync.
 type AgentRepository interface {
 	GetAgentByID(ctx context.Context, id uuid.UUID) (*domainagent.Agent, error)
 }
@@ -49,14 +48,12 @@ type CapabilityRepository interface {
 type SyncUseCase struct {
 	agents       AgentRepository
 	capabilities CapabilityRepository
-	secretH      appagent.SecretHasher
 }
 
-func NewSyncUseCase(agents AgentRepository, capabilities CapabilityRepository, secretH appagent.SecretHasher) *SyncUseCase {
+func NewSyncUseCase(agents AgentRepository, capabilities CapabilityRepository) *SyncUseCase {
 	return &SyncUseCase{
 		agents:       agents,
 		capabilities: capabilities,
-		secretH:      secretH,
 	}
 }
 
@@ -75,14 +72,6 @@ func (uc *SyncUseCase) Sync(ctx context.Context, req SyncRequest) (SyncResponse,
 			return SyncResponse{}, appagent.ErrAgentNotFound
 		}
 		return SyncResponse{}, fmt.Errorf("capability: get agent: %w", err)
-	}
-
-	ok, err := uc.secretH.Verify(ctx, ag.Secret, req.Secret)
-	if err != nil {
-		return SyncResponse{}, fmt.Errorf("capability: verify secret: %w", err)
-	}
-	if !ok {
-		return SyncResponse{}, appagent.ErrAgentSecretMismatch
 	}
 
 	if ag.Status == appagent.StatusUnregistered {

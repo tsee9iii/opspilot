@@ -42,7 +42,7 @@ pkg/
   logger/             zap logger
 gen/postgresql/       sqlc-generated query code (checked in)
 sql/
-  migrations/         0001..0005 schema migrations
+  migrations/         0001..0011 schema migrations
   queries/            annotated SQL consumed by sqlc
 ```
 

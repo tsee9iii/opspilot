@@ -20,6 +20,7 @@ type Config struct {
 	CentralURL        string                `yaml:"central_url"`
 	RegistrationToken string                `yaml:"registration_token"`
 	Secret            string                `yaml:"secret"`
+	SigningKey        string                `yaml:"signing_key"`
 	Version           string                `yaml:"version"`
 	Server            ServerInfo            `yaml:"server"`
 	AgentID           string                `yaml:"agent_id"`

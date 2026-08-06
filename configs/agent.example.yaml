@@ -6,6 +6,9 @@ server:
   hostname: ""
   environment: ""
 agent_id: ""
+# signing_key is issued by central during registration and persisted here so
+# the agent can HMAC-sign subsequent requests.
+signing_key: ""
 poll_interval: 5
 execution_policy:
   enabled: true

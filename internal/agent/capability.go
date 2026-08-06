@@ -19,7 +19,6 @@ type capabilityInfo struct {
 
 type syncCapabilitiesRequest struct {
 	AgentID      string           `json:"agent_id"`
-	Secret       string           `json:"secret"`
 	Capabilities []capabilityInfo `json:"capabilities"`
 }
 
@@ -28,7 +27,6 @@ func (a *Agent) registerCapabilities(ctx context.Context) error {
 	names := a.registry.List()
 	req := syncCapabilitiesRequest{
 		AgentID:      a.cfg.AgentID,
-		Secret:       a.cfg.Secret,
 		Capabilities: make([]capabilityInfo, 0, len(names)),
 	}
 	for _, name := range names {

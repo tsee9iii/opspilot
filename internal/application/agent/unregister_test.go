@@ -28,8 +28,7 @@ func newUnregisterFixture(status string) (uuid.UUID, *fakeUnregisterRepo, *Unreg
 		unregistered: map[uuid.UUID]bool{},
 		heartbeats:   map[uuid.UUID]int{},
 	}
-	hasher := &fakeHasher{}
-	return agentID, repo, NewUnregisterUseCase(repo, hasher), NewHeartbeatUseCase(repo, hasher)
+	return agentID, repo, NewUnregisterUseCase(repo), NewHeartbeatUseCase(repo)
 }
 
 func (r *fakeUnregisterRepo) RegisterAgent(context.Context, RegisterAgentRequest) (RegisterAgentResponse, error) {
@@ -52,11 +51,11 @@ func (r *fakeUnregisterRepo) UnregisterAgent(_ context.Context, id uuid.UUID) er
 	if r.unregisterErr != nil {
 		return r.unregisterErr
 	}
-	r.unregistered[id] = true
-	a, ok := r.agents[id]
-	if ok {
-		a.Status = StatusUnregistered
+	if _, ok := r.agents[id]; !ok {
+		return ErrAgentNotFound
 	}
+	r.unregistered[id] = true
+	r.agents[id].Status = StatusUnregistered
 	return nil
 }
 
@@ -71,7 +70,7 @@ func (h *fakeHasher) Verify(_ context.Context, encoded, secret string) (bool, er
 func TestUnregisterSuccess(t *testing.T) {
 	agentID, repo, uc, _ := newUnregisterFixture(StatusOnline)
 	resp, err := uc.Unregister(context.Background(), UnregisterRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -87,7 +86,7 @@ func TestUnregisterSuccess(t *testing.T) {
 func TestUnregisterIdempotent(t *testing.T) {
 	agentID, _, uc, _ := newUnregisterFixture(StatusUnregistered)
 	resp, err := uc.Unregister(context.Background(), UnregisterRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	})
 	if err != nil {
 		t.Fatalf("expected idempotent success, got: %v", err)
@@ -100,7 +99,7 @@ func TestUnregisterIdempotent(t *testing.T) {
 func TestUnregisterInvalidAgentID(t *testing.T) {
 	_, _, uc, _ := newUnregisterFixture(StatusOnline)
 	_, err := uc.Unregister(context.Background(), UnregisterRequest{
-		AgentID: "not-a-uuid", Secret: "good-secret",
+		AgentID: "not-a-uuid",
 	})
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Fatalf("expected ErrAgentNotFound, got: %v", err)
@@ -110,23 +109,10 @@ func TestUnregisterInvalidAgentID(t *testing.T) {
 func TestUnregisterUnknownAgent(t *testing.T) {
 	_, _, uc, _ := newUnregisterFixture(StatusOnline)
 	_, err := uc.Unregister(context.Background(), UnregisterRequest{
-		AgentID: uuid.New().String(), Secret: "good-secret",
+		AgentID: uuid.New().String(),
 	})
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Fatalf("expected ErrAgentNotFound, got: %v", err)
-	}
-}
-
-func TestUnregisterSecretMismatch(t *testing.T) {
-	agentID, repo, uc, _ := newUnregisterFixture(StatusOnline)
-	_, err := uc.Unregister(context.Background(), UnregisterRequest{
-		AgentID: agentID.String(), Secret: "wrong-secret",
-	})
-	if !errors.Is(err, ErrAgentSecretMismatch) {
-		t.Fatalf("expected ErrAgentSecretMismatch, got: %v", err)
-	}
-	if repo.unregistered[agentID] {
-		t.Fatal("agent must not be unregistered on secret mismatch")
 	}
 }
 
@@ -134,7 +120,7 @@ func TestUnregisterRepositoryError(t *testing.T) {
 	agentID, repo, uc, _ := newUnregisterFixture(StatusOnline)
 	repo.unregisterErr = errors.New("db down")
 	_, err := uc.Unregister(context.Background(), UnregisterRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	})
 	if err == nil {
 		t.Fatal("expected error from repository to propagate")
@@ -144,7 +130,7 @@ func TestUnregisterRepositoryError(t *testing.T) {
 func TestHeartbeatRejectsUnregistered(t *testing.T) {
 	agentID, repo, _, heartbeat := newUnregisterFixture(StatusUnregistered)
 	_, err := heartbeat.Heartbeat(context.Background(), HeartbeatRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	})
 	if !errors.Is(err, ErrAgentUnregistered) {
 		t.Fatalf("expected ErrAgentUnregistered, got: %v", err)
@@ -157,7 +143,7 @@ func TestHeartbeatRejectsUnregistered(t *testing.T) {
 func TestHeartbeatAcceptedForOnline(t *testing.T) {
 	agentID, repo, _, heartbeat := newUnregisterFixture(StatusOnline)
 	if _, err := heartbeat.Heartbeat(context.Background(), HeartbeatRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

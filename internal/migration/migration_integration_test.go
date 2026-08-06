@@ -27,8 +27,8 @@ func TestMigrations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load migrations: %v", err)
 		}
-		if len(list) != 10 {
-			t.Fatalf("expected 10 embedded migrations, got %d", len(list))
+		if len(list) != 11 {
+			t.Fatalf("expected 11 embedded migrations, got %d", len(list))
 		}
 		for i, m := range list {
 			if i > 0 && list[i-1].Version >= m.Version {
@@ -46,10 +46,10 @@ func TestMigrations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("run migrations: %v", err)
 		}
-		if len(applied) != 10 {
-			t.Fatalf("expected 10 applied, got %d: %v", len(applied), applied)
+		if len(applied) != 11 {
+			t.Fatalf("expected 11 applied, got %d: %v", len(applied), applied)
 		}
-		assertColumnCount(t, ctx, pool, "schema_migrations", 10)
+		assertColumnCount(t, ctx, pool, "schema_migrations", 11)
 		assertTableExists(t, ctx, pool, "agents")
 	})
 
@@ -93,8 +93,8 @@ func TestMigrations(t *testing.T) {
 		if err != nil {
 			t.Fatalf("status: %v", err)
 		}
-		if len(st.Applied) != 10 || len(st.Pending) != 0 {
-			t.Fatalf("expected 10 applied / 0 pending, got %d / %d", len(st.Applied), len(st.Pending))
+		if len(st.Applied) != 11 || len(st.Pending) != 0 {
+			t.Fatalf("expected 11 applied / 0 pending, got %d / %d", len(st.Applied), len(st.Pending))
 		}
 	})
 
@@ -120,22 +120,22 @@ func TestMigrations(t *testing.T) {
 			t.Fatalf("apply first two: %v", err)
 		}
 
-		// Full source now sees 2 applied / 8 pending.
+		// Full source now sees 2 applied / 9 pending.
 		runner := NewRunner(migrationsFS(t), storage)
 		st, err := runner.Status(ctx)
 		if err != nil {
 			t.Fatalf("status: %v", err)
 		}
-		if len(st.Applied) != 2 || len(st.Pending) != 8 {
-			t.Fatalf("expected 2 applied / 8 pending, got %d / %d", len(st.Applied), len(st.Pending))
+		if len(st.Applied) != 2 || len(st.Pending) != 9 {
+			t.Fatalf("expected 2 applied / 9 pending, got %d / %d", len(st.Applied), len(st.Pending))
 		}
 
 		applied, err := runner.Run(ctx)
 		if err != nil {
 			t.Fatalf("run after partial: %v", err)
 		}
-		if len(applied) != 8 {
-			t.Fatalf("expected 8 newly applied, got %d: %v", len(applied), applied)
+		if len(applied) != 9 {
+			t.Fatalf("expected 9 newly applied, got %d: %v", len(applied), applied)
 		}
 		// The two previously applied migrations must not be re-run.
 		for _, v := range applied {
@@ -143,7 +143,7 @@ func TestMigrations(t *testing.T) {
 				t.Fatalf("previously applied migration re-ran: %s", v)
 			}
 		}
-		assertColumnCount(t, ctx, pool, "schema_migrations", 10)
+		assertColumnCount(t, ctx, pool, "schema_migrations", 11)
 	})
 
 	t.Run("failed migration rolls back and stops", func(t *testing.T) {

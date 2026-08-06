@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -144,11 +143,10 @@ func (a *Agent) reportCommand(ctx context.Context, path string, req reportReques
 }
 
 func (a *Agent) postJSON(ctx context.Context, path string, body []byte) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.CentralURL+path, bytes.NewReader(body))
+	req, err := a.newRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
-		return nil, fmt.Errorf("agent: build request: %w", err)
+		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.http.Do(req)
 	if err != nil {

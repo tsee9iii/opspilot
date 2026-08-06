@@ -26,7 +26,11 @@ type Config struct {
 		Level string
 	}
 	Auth struct {
-		ServerSecret string
+		ServerSecret  string
+		OperatorToken string
+	}
+	Commands struct {
+		LeaseTTLSeconds int
 	}
 	MCP struct {
 		// ExecutionTimeoutSeconds is the default timeout for dispatched
@@ -55,8 +59,12 @@ type fileConfig struct {
 		Level string `yaml:"level"`
 	} `yaml:"logger"`
 	Auth struct {
-		ServerSecret string `yaml:"server_secret"`
+		ServerSecret  string `yaml:"server_secret"`
+		OperatorToken string `yaml:"operator_token"`
 	} `yaml:"auth"`
+	Commands struct {
+		LeaseTTLSeconds int `yaml:"lease_ttl_seconds"`
+	} `yaml:"commands"`
 	MCP struct {
 		ExecutionTimeoutSeconds int `yaml:"execution_timeout_seconds"`
 	} `yaml:"mcp"`
@@ -103,6 +111,9 @@ func defaults() *Config {
 	cfg.Logger.Level = "info"
 
 	cfg.Auth.ServerSecret = "dev-only-secret-change-me"
+	cfg.Auth.OperatorToken = "dev-operator-token-change-me"
+
+	cfg.Commands.LeaseTTLSeconds = 60
 
 	cfg.MCP.ExecutionTimeoutSeconds = 300
 
@@ -171,6 +182,13 @@ func applyFile(fc *fileConfig, cfg *Config) {
 	if fc.Auth.ServerSecret != "" {
 		cfg.Auth.ServerSecret = fc.Auth.ServerSecret
 	}
+	if fc.Auth.OperatorToken != "" {
+		cfg.Auth.OperatorToken = fc.Auth.OperatorToken
+	}
+
+	if fc.Commands.LeaseTTLSeconds != 0 {
+		cfg.Commands.LeaseTTLSeconds = fc.Commands.LeaseTTLSeconds
+	}
 
 	if fc.MCP.ExecutionTimeoutSeconds != 0 {
 		cfg.MCP.ExecutionTimeoutSeconds = fc.MCP.ExecutionTimeoutSeconds
@@ -194,6 +212,9 @@ func applyEnv(cfg *Config) {
 	cfg.Logger.Level = getEnv("OPSPILOT_LOG_LEVEL", cfg.Logger.Level)
 
 	cfg.Auth.ServerSecret = getEnv("OPSPILOT_AUTH_SERVER_SECRET", cfg.Auth.ServerSecret)
+	cfg.Auth.OperatorToken = getEnv("OPSPILOT_OPERATOR_TOKEN", cfg.Auth.OperatorToken)
+
+	cfg.Commands.LeaseTTLSeconds = getEnvInt("OPSPILOT_COMMAND_LEASE_TTL_SECONDS", cfg.Commands.LeaseTTLSeconds)
 
 	cfg.MCP.ExecutionTimeoutSeconds = getEnvInt("OPSPILOT_MCP_EXECUTION_TIMEOUT_SECONDS", cfg.MCP.ExecutionTimeoutSeconds)
 }

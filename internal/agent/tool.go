@@ -55,11 +55,16 @@ func BinaryAvailable(ctx context.Context, run func(context.Context, string, ...s
 // RunCommand runs a single binary and returns stdout, stderr and the exit
 // code as JSON. Context expiry (e.g. a policy timeout) surfaces as a
 // "tool timed out" error.
+//
+// Output is capped at MaxCommandOutputBytes: a tool that emits more (for
+// example a container producing huge docker logs) is reported as a structured
+// ToolError instead of being buffered without bound.
 func RunCommand(ctx context.Context, path string, args ...string) ([]byte, error) {
-	var stdout, stderr bytes.Buffer
+	stdout := &boundedBuffer{buf: bytes.Buffer{}}
+	stderr := &boundedBuffer{buf: bytes.Buffer{}}
 	cmd := exec.CommandContext(ctx, path, args...)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	exitCode := 0
 	err := cmd.Run()
@@ -75,9 +80,44 @@ func RunCommand(ctx context.Context, path string, args ...string) ([]byte, error
 		}
 	}
 
+	if stdout.over || stderr.over {
+		return nil, &ToolError{
+			Code:       "output_limit_exceeded",
+			Message:    fmt.Sprintf("command output exceeds %d bytes", MaxCommandOutputBytes),
+			Suggestion: "Request a smaller or more targeted invocation, e.g. docker logs --tail with fewer lines.",
+		}
+	}
+
 	return json.Marshal(CommandResult{
 		Stdout:   stdout.String(),
 		Stderr:   stderr.String(),
 		ExitCode: exitCode,
 	})
 }
+
+// MaxCommandOutputBytes is the maximum combined stdout+stderr bytes a tool
+// command may emit before RunCommand fails with a structured ToolError.
+const MaxCommandOutputBytes = 1 << 20
+
+// boundedBuffer writes into an in-memory buffer up to MaxCommandOutputBytes,
+// discarding anything beyond the limit and flagging the overflow.
+type boundedBuffer struct {
+	buf  bytes.Buffer
+	over bool
+}
+
+func (b *boundedBuffer) Write(p []byte) (int, error) {
+	remaining := MaxCommandOutputBytes - b.buf.Len()
+	if remaining <= 0 {
+		b.over = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		b.buf.Write(p[:remaining])
+		b.over = true
+		return len(p), nil
+	}
+	return b.buf.Write(p)
+}
+
+func (b *boundedBuffer) String() string { return b.buf.String() }

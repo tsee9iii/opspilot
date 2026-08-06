@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/tsee9iii/opspilot/internal/agentsign"
 	domainagent "github.com/tsee9iii/opspilot/internal/domain/agent"
 )
 
@@ -17,11 +18,16 @@ type RegisterAgentRequest struct {
 	Version           string
 	Hostname          string
 	Environment       string
+	// SigningKey is the per-agent HMAC key issued by the use case and handed
+	// to the repository for storage. It is also returned to the caller so the
+	// agent can sign subsequent requests.
+	SigningKey string
 }
 
 type RegisterAgentResponse struct {
-	AgentID string
-	Status  string
+	AgentID    string
+	Status     string
+	SigningKey string
 }
 
 // Agent lifecycle status values.
@@ -99,7 +105,18 @@ func (uc *RegisterUseCase) Register(ctx context.Context, req RegisterAgentReques
 		return RegisterAgentResponse{}, fmt.Errorf("agent: hash agent secret: %w", err)
 	}
 
+	signingKey, err := agentsign.NewSigningKey()
+	if err != nil {
+		return RegisterAgentResponse{}, fmt.Errorf("agent: generate signing key: %w", err)
+	}
+
 	hashed := req
 	hashed.Secret = secretHash
-	return uc.agents.RegisterAgent(ctx, hashed)
+	hashed.SigningKey = signingKey
+	res, err := uc.agents.RegisterAgent(ctx, hashed)
+	if err != nil {
+		return res, err
+	}
+	res.SigningKey = signingKey
+	return res, nil
 }

@@ -24,7 +24,7 @@ func newHeartbeatFixture(status string) (uuid.UUID, *fakeHeartbeatRepo, *Heartbe
 	repo := &fakeHeartbeatRepo{agents: map[uuid.UUID]*domainagent.Agent{
 		agentID: {ID: agentID, Secret: testSecretHash, Status: status},
 	}}
-	return agentID, repo, NewHeartbeatUseCase(repo, &fakeHasher{})
+	return agentID, repo, NewHeartbeatUseCase(repo)
 }
 
 func (r *fakeHeartbeatRepo) RegisterAgent(context.Context, RegisterAgentRequest) (RegisterAgentResponse, error) {
@@ -61,7 +61,7 @@ func (r *fakeHeartbeatRepo) UnregisterAgent(context.Context, uuid.UUID) error { 
 func TestHeartbeatOfflineToOnline(t *testing.T) {
 	agentID, repo, uc := newHeartbeatFixture(StatusOffline)
 	if _, err := uc.Heartbeat(context.Background(), HeartbeatRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestHeartbeatOfflineToOnline(t *testing.T) {
 func TestHeartbeatOnlineStaysOnline(t *testing.T) {
 	agentID, repo, uc := newHeartbeatFixture(StatusOnline)
 	if _, err := uc.Heartbeat(context.Background(), HeartbeatRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestHeartbeatOnlineStaysOnline(t *testing.T) {
 func TestHeartbeatUnregisteredNotResurrected(t *testing.T) {
 	agentID, repo, uc := newHeartbeatFixture(StatusUnregistered)
 	if _, err := uc.Heartbeat(context.Background(), HeartbeatRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	}); !errors.Is(err, ErrAgentUnregistered) {
 		t.Fatalf("expected ErrAgentUnregistered, got: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestHeartbeatUpdatesLastHeartbeat(t *testing.T) {
 	agentID, repo, uc := newHeartbeatFixture(StatusOnline)
 	before := time.Now()
 	if _, err := uc.Heartbeat(context.Background(), HeartbeatRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestHeartbeatUpdatesUpdatedAt(t *testing.T) {
 	agentID, repo, uc := newHeartbeatFixture(StatusOffline)
 	before := time.Now()
 	if _, err := uc.Heartbeat(context.Background(), HeartbeatRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

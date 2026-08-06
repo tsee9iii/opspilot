@@ -8,6 +8,7 @@ import (
 
 type fakeRepo struct {
 	created       []CreateCommandRequest
+	leasedReq     LeaseCommandRequest
 	approveResult ApproveCommandResponse
 	approveErr    error
 	getResult     GetCommandResponse
@@ -19,7 +20,8 @@ func (r *fakeRepo) CreateCommand(_ context.Context, req CreateCommandRequest) (C
 	return CreateCommandResponse{CommandID: "cmd-1", Status: StatusPending}, nil
 }
 
-func (r *fakeRepo) LeaseNextCommand(_ context.Context, _ LeaseCommandRequest) (LeaseCommandResponse, error) {
+func (r *fakeRepo) LeaseNextCommand(_ context.Context, req LeaseCommandRequest) (LeaseCommandResponse, error) {
+	r.leasedReq = req
 	return LeaseCommandResponse{}, nil
 }
 

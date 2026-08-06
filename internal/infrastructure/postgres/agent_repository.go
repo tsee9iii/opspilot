@@ -45,11 +45,13 @@ func (r *AgentRepository) RegisterAgent(ctx context.Context, req appagent.Regist
 		return appagent.RegisterAgentResponse{}, fmt.Errorf("postgres: upsert server: %w", err)
 	}
 
-	// The caller provides the already-hashed secret.
+	// The caller provides the already-hashed secret and the per-agent signing
+	// key issued at registration.
 	row, err := qtx.CreateAgent(ctx, postgresql.CreateAgentParams{
-		ServerID: serverID,
-		Secret:   req.Secret,
-		Version:  req.Version,
+		ServerID:   serverID,
+		Secret:     req.Secret,
+		Version:    req.Version,
+		SigningKey: req.SigningKey,
 	})
 	if err != nil {
 		return appagent.RegisterAgentResponse{}, fmt.Errorf("postgres: create agent: %w", err)
@@ -117,11 +119,12 @@ func (r *AgentRepository) UnregisterAgent(ctx context.Context, id uuid.UUID) err
 	return nil
 }
 
-func mapAgent(row postgresql.Agents) *domainagent.Agent {
+func mapAgent(row postgresql.GetAgentByIDRow) *domainagent.Agent {
 	return &domainagent.Agent{
 		ID:            row.ID,
 		ServerID:      row.ServerID,
 		Secret:        row.Secret,
+		SigningKey:    row.SigningKey,
 		Version:       row.Version,
 		Status:        row.Status,
 		LastHeartbeat: pgtypeTimePtr(row.LastHeartbeat),

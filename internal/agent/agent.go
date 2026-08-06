@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+
+	"github.com/tsee9iii/opspilot/internal/agentsign"
 )
 
 const (
@@ -84,17 +86,15 @@ func (a *Agent) heartbeat(ctx context.Context) error {
 func (a *Agent) sendHeartbeat(ctx context.Context) (time.Duration, error) {
 	body, err := json.Marshal(heartbeatRequest{
 		AgentID: a.cfg.AgentID,
-		Secret:  a.cfg.Secret,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("agent: marshal heartbeat: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.CentralURL+"/api/v1/agents/heartbeat", bytes.NewReader(body))
+	req, err := a.newRequest(ctx, http.MethodPost, "/api/v1/agents/heartbeat", body)
 	if err != nil {
-		return 0, fmt.Errorf("agent: build heartbeat request: %w", err)
+		return 0, err
 	}
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.http.Do(req)
 	if err != nil {
@@ -119,7 +119,6 @@ func (a *Agent) sendHeartbeat(ctx context.Context) (time.Duration, error) {
 
 type heartbeatRequest struct {
 	AgentID string `json:"agent_id"`
-	Secret  string `json:"secret"`
 }
 
 type heartbeatResponse struct {
@@ -145,11 +144,10 @@ func (a *Agent) register(ctx context.Context) error {
 		return fmt.Errorf("agent: marshal register request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.CentralURL+"/api/v1/agents/register", bytes.NewReader(body))
+	req, err := a.newRequest(ctx, http.MethodPost, "/api/v1/agents/register", body)
 	if err != nil {
-		return fmt.Errorf("agent: build register request: %w", err)
+		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := a.http.Do(req)
 	if err != nil {
@@ -168,8 +166,12 @@ func (a *Agent) register(ctx context.Context) error {
 	if result.AgentID == "" {
 		return fmt.Errorf("agent: empty agent_id in register response")
 	}
+	if result.SigningKey == "" {
+		return fmt.Errorf("agent: empty signing_key in register response")
+	}
 
 	a.cfg.AgentID = result.AgentID
+	a.cfg.SigningKey = result.SigningKey
 	return a.cfg.Save()
 }
 
@@ -186,8 +188,43 @@ type serverInfo struct {
 }
 
 type registerResponse struct {
-	AgentID string `json:"agent_id"`
-	Status  string `json:"status"`
+	AgentID    string `json:"agent_id"`
+	Status     string `json:"status"`
+	SigningKey string `json:"signing_key"`
+}
+
+// newRequest builds an HTTP request to central. Once the agent has an identity
+// and signing key (i.e. after registration), every request is HMAC-signed so
+// central can authenticate it.
+func (a *Agent) newRequest(ctx context.Context, method, path string, body []byte) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, a.cfg.CentralURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("agent: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if a.cfg.AgentID != "" && a.cfg.SigningKey != "" {
+		if err := a.sign(req, method, path, body); err != nil {
+			return nil, err
+		}
+	}
+	return req, nil
+}
+
+// sign attaches the HMAC request-signing headers to req.
+func (a *Agent) sign(req *http.Request, method, path string, body []byte) error {
+	nonce, err := agentsign.NewNonce()
+	if err != nil {
+		return fmt.Errorf("agent: generate nonce: %w", err)
+	}
+	timestamp := agentsign.Timestamp()
+	canonical := agentsign.Canonical(a.cfg.AgentID, timestamp, nonce, method, path, string(body))
+
+	req.Header.Set(agentsign.HeaderAgentID, a.cfg.AgentID)
+	req.Header.Set(agentsign.HeaderAgentTimestamp, timestamp)
+	req.Header.Set(agentsign.HeaderAgentNonce, nonce)
+	req.Header.Set(agentsign.HeaderAgentSignature, agentsign.Sign(a.cfg.SigningKey, canonical))
+	return nil
 }
 
 func readErrorMessage(resp *http.Response) string {

@@ -20,6 +20,7 @@ type Agents struct {
 	LastHeartbeat pgtype.Timestamptz
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	SigningKey    string
 }
 
 type Capabilities struct {

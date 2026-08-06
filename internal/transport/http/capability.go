@@ -30,7 +30,6 @@ func (h *CapabilityHandler) Sync(w http.ResponseWriter, r *http.Request) {
 
 	req := capability.SyncRequest{
 		AgentID:      reqDTO.AgentID,
-		Secret:       reqDTO.Secret,
 		Capabilities: make([]capability.Capability, 0, len(reqDTO.Capabilities)),
 	}
 	for _, c := range reqDTO.Capabilities {
@@ -52,7 +51,6 @@ func (h *CapabilityHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			errors.Is(err, capability.ErrCapabilitiesRequired):
 			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
 		case errors.Is(err, appagent.ErrAgentNotFound),
-			errors.Is(err, appagent.ErrAgentSecretMismatch),
 			errors.Is(err, appagent.ErrAgentUnregistered):
 			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid agent credentials")
 		default:
@@ -68,8 +66,6 @@ func validateSyncCapabilities(req SyncCapabilitiesRequest) error {
 	switch {
 	case req.AgentID == "":
 		return errors.New("agent_id is required")
-	case req.Secret == "":
-		return errors.New("secret is required")
 	case len(req.Capabilities) == 0:
 		return errors.New("capabilities is required")
 	}

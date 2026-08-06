@@ -10,6 +10,7 @@ type Agent struct {
 	ID            uuid.UUID
 	ServerID      uuid.UUID
 	Secret        string
+	SigningKey    string
 	Version       string
 	Status        string
 	LastHeartbeat *time.Time

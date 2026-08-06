@@ -73,28 +73,34 @@ All JSON. Errors use `{"error":{"code","message"}}`.
 | Method | Path                        | Auth            | Success                                  | Error codes                                                                  |
 | ------ | --------------------------- | --------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
 | GET    | `/healthz`                  | —               | `200 ok`                                 | —                                                                            |
-| POST   | `/api/v1/agents/register`   | token           | `201 {agent_id,status}`                  | 400 `validation_error`, 401 `invalid_token`, 409 `token_already_used`, 500   |
-| POST   | `/api/v1/agents/heartbeat`  | agent_id+secret | `200 {status,next_heartbeat}`            | 400, 401 `invalid_credentials`, 500                                          |
-| POST   | `/api/v1/agents/unregister` | agent_id+secret | `200 {status:"unregistered"}`           | 400, 401 `invalid_credentials`, 404 `agent_not_found`, 500                   |
+| POST   | `/api/v1/agents/register`   | token           | `201 {agent_id,status,signing_key}`      | 400 `validation_error`, 401 `invalid_token`, 409 `token_already_used`, 500   |
+| POST   | `/api/v1/agents/heartbeat`  | HMAC signing    | `200 {status,next_heartbeat}`            | 400, 401 `invalid_signature`, 500                                            |
+| POST   | `/api/v1/agents/unregister` | HMAC signing    | `200 {status:"unregistered"}`           | 400, 401 `invalid_signature`, 404 `agent_not_found`, 500                     |
 | POST   | `/api/v1/commands`          | —               | `201 {command_id,status}`                | 400, 500                                                                     |
-| POST   | `/api/v1/commands/lease`    | —               | `200 {command_id,tool,payload}` or `204` | 400, 500                                                                     |
-| POST   | `/api/v1/commands/start`    | —               | `200 {command_id,status}`                | 400, 403 `command_not_owned`, 404 `not_found`, 409 `invalid_transition`, 500 |
-| POST   | `/api/v1/commands/complete` | —               | `200 {command_id,status}`                | same as `start`                                                              |
-| POST   | `/api/v1/commands/fail`     | —               | `200 {command_id,status}`                | same as `start`                                                              |
-| POST   | `/api/v1/commands/approve`  | —               | `200 {status}`                           | 400 `validation_error`, 404 `command_not_found`, 500                          |
-| GET    | `/api/v1/commands/{id}`    | —               | `200 {command}`, see below               | 400 `invalid_command_id`, 404 `command_not_found`, 500                        |
-| POST   | `/api/v1/capabilities`      | agent_id+secret | `200 {status,count}`                     | 400, 401 `invalid_credentials`, 500                                          |
+| POST   | `/api/v1/commands/lease`    | HMAC signing    | `200 {command_id,tool,payload}` or `204` | 400, 401 `invalid_signature`, 500                                            |
+| POST   | `/api/v1/commands/start`    | HMAC signing    | `200 {command_id,status}`                | 400, 401, 403 `command_not_owned`, 404 `not_found`, 409 `invalid_transition`, 500 |
+| POST   | `/api/v1/commands/complete` | HMAC signing    | `200 {command_id,status}`                | same as `start`                                                              |
+| POST   | `/api/v1/commands/fail`     | HMAC signing    | `200 {command_id,status}`                | same as `start`                                                              |
+| POST   | `/api/v1/commands/approve`  | operator bearer | `200 {status}`                           | 400 `validation_error`, 401 `unauthorized`, 404 `command_not_found`, 500      |
+| GET    | `/api/v1/commands/{id}`    | operator bearer | `200 {command}`, see below               | 400 `invalid_command_id`, 401 `unauthorized`, 404 `command_not_found`, 500    |
+| POST   | `/api/v1/capabilities`      | HMAC signing    | `200 {status,count}`                     | 400, 401 `invalid_signature`, 500                                            |
+
+HMAC signing (see §8): every agent request carries `X-Agent-Id`,
+`X-Agent-Timestamp`, `X-Agent-Nonce`, `X-Agent-Signature` computed over
+`agent_id "\n" timestamp "\n" nonce "\n" method "\n" path "\n" body` with the
+agent's per-agent signing key. Registration itself is unsigned and returns the
+signing key once.
 
 Request bodies:
 
 - `register`: `registration_token`, `secret`, `version`, `server{hostname,environment}`
-- `heartbeat`: `agent_id`, `secret`
-- `unregister`: `agent_id`, `secret`
+- `heartbeat`: `agent_id`
+- `unregister`: `agent_id`
 - `create`: `agent_id`, `tool`, `payload` (JSON object)
 - `lease`: `agent_id`
 - `start`/`complete`/`fail`: `agent_id`, `command_id` (+ `result` for complete, `error` for fail)
 - `approve`: `command_id`
-- `capabilities`: `agent_id`, `secret`, `capabilities[{tool_name,version,description,parameter_schema,confirmation_level,available,unavailable_reason}]`
+- `capabilities`: `agent_id`, `capabilities[{tool_name,version,description,parameter_schema,confirmation_level,available,unavailable_reason}]`
 
 `GET /api/v1/commands/{id}` response body:
 
@@ -120,7 +126,7 @@ command completes.
 
 ## 3. Database schema
 
-Migrations (`sql/migrations/0001..0010`):
+Migrations (`sql/migrations/0001..0011`):
 
 - `0001_init.sql` — `servers`, `agents`, `commands`
 - `0002_agent_auth.sql` — `registration_tokens`
@@ -136,6 +142,8 @@ Migrations (`sql/migrations/0001..0010`):
 - `0010_agent_unregister.sql` — restricts `agents.status` to
   `online` / `offline` / `unregistered` via a CHECK constraint and backfills
   existing agents to `online`
+- `0011_agent_signing_key.sql` — adds `agents.signing_key`, the per-agent HMAC
+  signing key issued at registration and used to sign every agent request
 
 The migration runner (see §22) creates a `schema_migrations` bookkeeping table
 (`version TEXT PRIMARY KEY`, `applied_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
@@ -447,13 +455,22 @@ AllowedCommands, DeniedCommands, WorkingDirectory}`.
 token)` hex, never plaintext. Registration consumes the row atomically; a
   replay returns `409 token_already_used`. Expired/revoked tokens return
   `401 invalid_token`.
-- **Agent secrets**: stored as Argon2id hashes. Registration hashes the secret;
-  heartbeat, capability sync, and unregister verify the presented secret
-  against the stored hash (`401 invalid_credentials` on mismatch). Agents whose
+- **Agent request signing**: every post-registration agent request (heartbeat,
+  unregister, lease, start, complete, fail, capabilities) is HMAC-SHA256 signed
+  with the agent's per-agent signing key (`agents.signing_key`), issued once at
+  registration. The signature covers `agent_id "\n" timestamp "\n" nonce "\n"
+  method "\n" path "\n" body` (shared `internal/agentsign` contract); central
+  verifies constant-time, rejects timestamps outside the 5-minute window and
+  rejects replayed nonces (`401 invalid_signature` / `expired_timestamp` /
+  `replay_detected`). The Argon2id `secret` hash is retained at rest for
+  backwards compatibility but is no longer verified per request. Agents whose
   status is `unregistered` are rejected with `401 invalid_credentials` on
   heartbeat and capability sync (§18).
-- Command create/lease/transition endpoints are **not authenticated** (no
-  secret check); capability sync and heartbeat are.
+- **Operator endpoints**: `POST /api/v1/commands/approve` and
+  `GET /api/v1/commands/{id}` require a bearer token
+  (`OPSPILOT_OPERATOR_TOKEN`, YAML `auth.operator_token`), verified
+  constant-time (`401 unauthorized`).
+- Command create is **not authenticated**; it is an internal enqueue endpoint.
 
 ## 9. Configuration
 
@@ -465,10 +482,12 @@ variables always override YAML (see §23).
 Environment variables: `OPSPILOT_ENV`, `OPSPILOT_HTTP_HOST`/`PORT`,
 `OPSPILOT_DB_HOST`/`PORT`/`USER`/`PASSWORD`/`NAME`/`SSLMODE`,
 `OPSPILOT_LOG_LEVEL`, `OPSPILOT_AUTH_SERVER_SECRET`
-(default `dev-only-secret-change-me`).
+(default `dev-only-secret-change-me`), `OPSPILOT_OPERATOR_TOKEN`
+(default `dev-operator-token-change-me`), `OPSPILOT_COMMAND_LEASE_TTL_SECONDS`
+(default `60`).
 
 Agent — YAML (`configs/agent.example.yaml`):
-`central_url`, `registration_token`, `secret`, `version`,
+`central_url`, `registration_token`, `secret`, `signing_key`, `version`,
 `server{hostname,environment}`, `agent_id`, `poll_interval`,
 `execution_policy{enabled,timeout,allowed_commands,denied_commands,working_directory}`,
 and the optional `projects` section (see §15).
@@ -491,7 +510,7 @@ internal/
   transport/http/       router, handlers, DTOs
 pkg/config/             env-based config
 pkg/logger/             zap logger
-sql/migrations/         0001..0010 (+ embed.go)
+sql/migrations/         0001..0011 (+ embed.go)
 sql/queries/            annotated SQL for sqlc
 deployments/            docker-compose (PostgreSQL 16)
 docs/                   architecture, implementation, roadmap, adr/
@@ -500,11 +519,12 @@ docs/                   architecture, implementation, roadmap, adr/
 ## 11. Technical debt
 
 - `agents.secret` still names the Argon2id hash column `secret` (renaming to
-  `secret_hash` was deferred in migration `0002`).
-- Command endpoints are unauthenticated.
+  `secret_hash` was deferred in migration `0002`). The hash is retained at rest
+  for backwards compatibility; per-request verification now uses HMAC request
+  signing via `agents.signing_key`.
 - `execution_policy.working_directory` is inert in the registry-driven flow.
-- Leases are permanent: a leased command never returns to `pending`, even if
-  its agent dies (no lease timeout/renewal).
+- Leases expire lazily at lease time (task: lazy lease expiry), not via a
+  background scheduler.
 - `assertTransition` reads the command, then updates with an atomic `WHERE`;
   state is re-checked in SQL but the read is an extra round-trip.
 - Migrations are embedded in the binary and run automatically at startup
@@ -693,8 +713,9 @@ docs/                   architecture, implementation, roadmap, adr/
   latest released `opspilot-agent` binary from GitHub Releases, registers the
   agent with a Central server, persists the returned credentials into
   `/etc/opspilot/agent.yaml`, installs it as a systemd service, and verifies the
-  install by polling the heartbeat endpoint. The installer is idempotent and
-  only mutates installer-owned config fields.
+  install by polling the heartbeat and lease endpoints with HMAC-signed
+  requests. The installer is idempotent and only mutates installer-owned config
+  fields.
 - **Platform detection**: Linux only; `uname -m` maps `x86_64 → amd64` and
   `aarch64 → arm64`. Anything else fails with
   `unsupported OS` / `unsupported architecture`. Root is required unless
@@ -710,20 +731,21 @@ docs/                   architecture, implementation, roadmap, adr/
 - **Registration decision**: if `agent.yaml` contains both a non-empty
   `agent_id` and `secret`, the agent is considered already registered and the
   operator is asked `Re-register this agent? (y/N)` (default No). No → skip
-  registration and preserve `agent_id`/`secret`/`registration_token`, continuing
-  with binary + service update (exit 0). Yes → re-register, consuming a fresh
-  token and replacing the credentials.
+  registration and preserve `agent_id`/`secret`/`signing_key`/
+  `registration_token`, continuing with binary + service update (exit 0). Yes →
+  re-register, consuming a fresh token and replacing the credentials (including
+  a fresh `signing_key`).
 - **Registration protocol**: builds the request body in a 0600 temp file (so
   secrets never appear in `ps`/argv) and POSTs it with curl `--data-binary @file`
   to `{central_url}/api/v1/agents/register`. The body carries
-  `registration_token`, a client-generated `secret` (`openssl rand -hex 32`,
-  fallback `od /dev/urandom`), `version`, and `server.{hostname,environment}`.
-  Success   is HTTP **201** returning `{"agent_id": ...}` (no secret in the
-  response); the `agent_id` is parsed from it and a missing id aborts. Non-201
-  responses abort with the `message` extracted from the JSON error body. The
-  Central URL and registration token are prompted; an existing `central_url` is
-  the prompt default, and on a re-register a fresh token is required (the old
-  token is consumed by the previous registration).
+  `registration_token`, a client-generated `secret` (`rand_hex 32`, openssl or
+  `/dev/urandom` fallback), `version`, and `server.{hostname,environment}`.
+  Success is HTTP **201** returning `{"agent_id", "signing_key", ...}`; the
+  `agent_id` and `signing_key` are parsed from it and a missing value aborts.
+  Non-201 responses abort with the `message` extracted from the JSON error
+  body. The Central URL and registration token are prompted; an existing
+  `central_url` is the prompt default, and on a re-register a fresh token is
+  required (the old token is consumed by the previous registration).
 - **Input normalization**: every prompted value is normalized before use —
   leading/trailing whitespace and a trailing CR/LF are stripped; for the Central
   URL, trailing slashes are also removed (`http://host:9090/` →
@@ -732,12 +754,13 @@ docs/                   architecture, implementation, roadmap, adr/
   Central URL is only printed when `OPSPILOT_DEBUG=1`.
 - **Config persistence**: when `agent.yaml` does not exist, a full 0600 template
   is written; when it exists, only installer-owned fields are replaced
-  (`central_url`, `registration_token`, `secret`, `agent_id`, `version`) while
-  operator-owned `server.hostname`/`server.environment` and extra sections (e.g.
-  `projects`, `poll_interval`) are preserved. All rewrites keep mode `0600`.
-- **Secrets hygiene**: the generated `secret` and the registration token are
-  never printed or logged; request/response bodies live only in a temp dir that
-  is removed via `trap ... EXIT`.
+  (`central_url`, `registration_token`, `secret`, `signing_key`, `agent_id`,
+  `version`) while operator-owned `server.hostname`/`server.environment` and
+  extra sections (e.g. `projects`, `poll_interval`) are preserved. All rewrites
+  keep mode `0600`.
+- **Secrets hygiene**: the generated `secret`, the signing key and the
+  registration token are never printed or logged; request/response bodies live
+  only in a temp dir that is removed via `trap ... EXIT`.
 - **System user**: the `opspilot` system user is created only when missing
   (`useradd --system --no-create-home --user-group --shell /bin/false
   opspilot`), guarded by `id opspilot`. The config directory and file are
@@ -748,22 +771,32 @@ docs/                   architecture, implementation, roadmap, adr/
   `User=opspilot`, `Group=opspilot`, `WorkingDirectory=/etc/opspilot`,
   `WantedBy=multi-user.target`. The service is started via
   `systemctl daemon-reload; enable; start`.
-- **Verification**: after `start`, the installer polls the heartbeat endpoint
-  (`{central_url}/api/v1/agents/heartbeat` with `agent_id` + `secret`) up to 5
-  times; on HTTP 200 it logs `agent heartbeat verified`. On persistent failure
-  it prints `systemctl status` + `journalctl` and aborts on the register path
-  (warn-only on the skip-registration path).
+- **Verification**: after `start`, the installer signs each agent request with
+  the persisted `signing_key` (HMAC-SHA256 over the canonical
+  `agent_id "\n" timestamp "\n" nonce "\n" method "\n" path "\n" body`, sent via
+  the `X-Agent-Id` / `X-Agent-Timestamp` / `X-Agent-Nonce` / `X-Agent-Signature`
+  headers — the same protocol as the production agent, implemented in
+  `sign_agent_request`). It polls the heartbeat endpoint
+  (`{central_url}/api/v1/agents/heartbeat`) up to 5 times; on HTTP 200 it logs
+  `agent heartbeat verified`, then performs a signed lease request
+  (`{central_url}/api/v1/commands/lease`), logging `agent lease verified` on
+  200/204. Signing requires `openssl`. On persistent failure it prints
+  `systemctl status` + `journalctl` and aborts on the register path (warn-only
+  on the skip-registration path). A legacy config without a `signing_key` skips
+  the HMAC verification with a warning that re-registration is needed.
 - **Idempotency**: safe to re-run — the binary and unit file are reinstalled and
   the service re-enabled, and an already-registered agent is never re-registered
   unless the operator answers Yes.
 - **Testability**: installer path overrides `OPSPILOT_CONFIG_DIR`,
   `OPSPILOT_BIN_PATH`, `OPSPILOT_SERVICE_PATH`, `OPSPILOT_LOCAL_BIN`,
   `OPSPILOT_ALLOW_NON_ROOT`. `scripts/install-tests.sh` exercises the installer
-  against a mock Central + stubbed system tools, covering successful
-  registration, response parsing, invalid/unreachable/invalid-URL failures,
-  config preservation, service start/stop behavior, re-registration prompts, and
-  secret/token not being printed.
-- **Tests**: `scripts/install-tests.sh` passes 50 assertions (including input
+  against a mock Central (validating the HMAC signatures) + stubbed system
+  tools, covering successful registration, `signing_key` persistence,
+  HMAC-signed heartbeat and lease verification, response parsing,
+  invalid/unreachable/invalid-URL failures, config preservation, service
+  start/stop behavior, re-registration prompts, and secret/token not being
+  printed.
+- **Tests**: `scripts/install-tests.sh` passes 60 assertions (including input
   normalization for trailing CR/LF, spaces, and a trailing slash, plus a
   normalize unit test); `scripts/install.sh`
   is clean under `shellcheck` and `bash -n`; the Go suite

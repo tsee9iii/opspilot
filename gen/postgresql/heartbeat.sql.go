@@ -7,24 +7,39 @@ package postgresql
 
 import (
 	"context"
+	"time"
 
 	uuid "github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const getAgentByID = `-- name: GetAgentByID :one
-SELECT id, server_id, secret, version, status, last_heartbeat, created_at, updated_at
+SELECT id, server_id, secret, signing_key, version, status, last_heartbeat, created_at, updated_at
 FROM agents
 WHERE id = $1
 `
 
-// Fetch an agent by id, including the stored secret hash for verification.
-func (q *Queries) GetAgentByID(ctx context.Context, id uuid.UUID) (Agents, error) {
+type GetAgentByIDRow struct {
+	ID            uuid.UUID
+	ServerID      uuid.UUID
+	Secret        string
+	SigningKey    string
+	Version       string
+	Status        string
+	LastHeartbeat pgtype.Timestamptz
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+// Fetch an agent by id, including its stored secret hash and signing key.
+func (q *Queries) GetAgentByID(ctx context.Context, id uuid.UUID) (GetAgentByIDRow, error) {
 	row := q.db.QueryRow(ctx, getAgentByID, id)
-	var i Agents
+	var i GetAgentByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.ServerID,
 		&i.Secret,
+		&i.SigningKey,
 		&i.Version,
 		&i.Status,
 		&i.LastHeartbeat,

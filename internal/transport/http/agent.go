@@ -36,12 +36,10 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.heartbeat.Heartbeat(r.Context(), agent.HeartbeatRequest{
 		AgentID: reqDTO.AgentID,
-		Secret:  reqDTO.Secret,
 	})
 	if err != nil {
 		switch {
 		case errors.Is(err, agent.ErrAgentNotFound),
-			errors.Is(err, agent.ErrAgentSecretMismatch),
 			errors.Is(err, agent.ErrAgentUnregistered):
 			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid agent credentials")
 		default:
@@ -60,8 +58,6 @@ func validateHeartbeat(req HeartbeatRequest) error {
 	switch {
 	case req.AgentID == "":
 		return errors.New("agent_id is required")
-	case req.Secret == "":
-		return errors.New("secret is required")
 	}
 	return nil
 }
@@ -80,12 +76,9 @@ func (h *AgentHandler) Unregister(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.unregister.Unregister(r.Context(), agent.UnregisterRequest{
 		AgentID: reqDTO.AgentID,
-		Secret:  reqDTO.Secret,
 	})
 	if err != nil {
 		switch {
-		case errors.Is(err, agent.ErrAgentSecretMismatch):
-			writeError(w, http.StatusUnauthorized, "invalid_credentials", "invalid agent credentials")
 		case errors.Is(err, agent.ErrAgentNotFound):
 			writeError(w, http.StatusNotFound, "agent_not_found", "agent not found")
 		default:
@@ -101,8 +94,6 @@ func validateUnregisterAgent(req UnregisterAgentRequest) error {
 	switch {
 	case req.AgentID == "":
 		return errors.New("agent_id is required")
-	case req.Secret == "":
-		return errors.New("secret is required")
 	}
 	return nil
 }
@@ -141,8 +132,9 @@ func (h *AgentHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, RegisterAgentResponse{
-		AgentID: resp.AgentID,
-		Status:  resp.Status,
+		AgentID:    resp.AgentID,
+		Status:     resp.Status,
+		SigningKey: resp.SigningKey,
 	})
 }
 

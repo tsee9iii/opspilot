@@ -33,28 +33,20 @@ func (r *fakeCapabilityRepo) Upsert(_ context.Context, _ uuid.UUID, cap Capabili
 	return nil
 }
 
-type fakeHasher struct{}
-
-func (h *fakeHasher) Hash(_ context.Context, _ string) (string, error) { return secretHash, nil }
-
-func (h *fakeHasher) Verify(_ context.Context, encoded, secret string) (bool, error) {
-	return encoded == secretHash && secret == "good-secret", nil
-}
-
 func newFixture() (uuid.UUID, *SyncUseCase, *fakeCapabilityRepo) {
 	agentID := uuid.New()
 	agents := &fakeAgentRepo{agents: map[uuid.UUID]*domainagent.Agent{
 		agentID: {ID: agentID, Secret: secretHash},
 	}}
 	caps := &fakeCapabilityRepo{}
-	uc := NewSyncUseCase(agents, caps, &fakeHasher{})
+	uc := NewSyncUseCase(agents, caps)
 	return agentID, uc, caps
 }
 
 func TestSyncInvalidAgentID(t *testing.T) {
 	_, uc, _ := newFixture()
 	_, err := uc.Sync(context.Background(), SyncRequest{
-		AgentID: "not-a-uuid", Secret: "good-secret",
+		AgentID:      "not-a-uuid",
 		Capabilities: []Capability{{ToolName: "system.uptime"}},
 	})
 	if !errors.Is(err, ErrInvalidAgentID) {
@@ -64,7 +56,7 @@ func TestSyncInvalidAgentID(t *testing.T) {
 
 func TestSyncEmptyCapabilities(t *testing.T) {
 	agentID, uc, _ := newFixture()
-	_, err := uc.Sync(context.Background(), SyncRequest{AgentID: agentID.String(), Secret: "good-secret"})
+	_, err := uc.Sync(context.Background(), SyncRequest{AgentID: agentID.String()})
 	if !errors.Is(err, ErrCapabilitiesRequired) {
 		t.Fatalf("expected ErrCapabilitiesRequired, got: %v", err)
 	}
@@ -73,22 +65,11 @@ func TestSyncEmptyCapabilities(t *testing.T) {
 func TestSyncAgentNotFound(t *testing.T) {
 	_, uc, _ := newFixture()
 	_, err := uc.Sync(context.Background(), SyncRequest{
-		AgentID: uuid.New().String(), Secret: "good-secret",
+		AgentID:      uuid.New().String(),
 		Capabilities: []Capability{{ToolName: "system.uptime"}},
 	})
 	if !errors.Is(err, appagent.ErrAgentNotFound) {
 		t.Fatalf("expected ErrAgentNotFound, got: %v", err)
-	}
-}
-
-func TestSyncSecretMismatch(t *testing.T) {
-	agentID, uc, _ := newFixture()
-	_, err := uc.Sync(context.Background(), SyncRequest{
-		AgentID: agentID.String(), Secret: "wrong",
-		Capabilities: []Capability{{ToolName: "system.uptime"}},
-	})
-	if !errors.Is(err, appagent.ErrAgentSecretMismatch) {
-		t.Fatalf("expected ErrAgentSecretMismatch, got: %v", err)
 	}
 }
 
@@ -98,10 +79,10 @@ func TestSyncRejectsUnregistered(t *testing.T) {
 		agentID: {ID: agentID, Secret: secretHash, Status: appagent.StatusUnregistered},
 	}}
 	caps := &fakeCapabilityRepo{}
-	uc := NewSyncUseCase(agents, caps, &fakeHasher{})
+	uc := NewSyncUseCase(agents, caps)
 
 	_, err := uc.Sync(context.Background(), SyncRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID:      agentID.String(),
 		Capabilities: []Capability{{ToolName: "system.uptime"}},
 	})
 	if !errors.Is(err, appagent.ErrAgentUnregistered) {
@@ -115,7 +96,7 @@ func TestSyncRejectsUnregistered(t *testing.T) {
 func TestSyncSuccess(t *testing.T) {
 	agentID, uc, caps := newFixture()
 	resp, err := uc.Sync(context.Background(), SyncRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 		Capabilities: []Capability{
 			{ToolName: "system.uptime", Version: "1.0.0", Description: "uptime", ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "none"},
 			{ToolName: "pm2.restart", Version: "1.0.0", Description: "restart", ParameterSchema: []byte(`{"type":"object","required":["process"],"properties":{"process":{"type":"string"}}}`), Confirmation: "required"},
@@ -150,7 +131,7 @@ func TestSyncSuccess(t *testing.T) {
 func TestSyncPersistsAvailability(t *testing.T) {
 	agentID, uc, caps := newFixture()
 	resp, err := uc.Sync(context.Background(), SyncRequest{
-		AgentID: agentID.String(), Secret: "good-secret",
+		AgentID: agentID.String(),
 		Capabilities: []Capability{
 			{ToolName: "docker.ps", Version: "1.0.0", Description: "ps", ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "none", Available: true},
 			{ToolName: "pm2.list", Version: "1.0.0", Description: "list", ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "none", Available: false, UnavailableReason: "pm2 is not installed"},

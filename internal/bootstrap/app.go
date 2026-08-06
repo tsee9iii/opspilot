@@ -81,8 +81,13 @@ func (a *App) Run(ctx context.Context) error {
 	handler := a.buildHandler()
 
 	server := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", a.cfg.HTTP.Host, a.cfg.HTTP.Port),
-		Handler: handler,
+		Addr:              fmt.Sprintf("%s:%d", a.cfg.HTTP.Host, a.cfg.HTTP.Port),
+		Handler:           handler,
+		ReadTimeout:       10 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	serverErr := make(chan error, 1)
@@ -124,17 +129,22 @@ func (a *App) buildHandler() http.Handler {
 		security.NewHMACHasher(a.cfg.Auth.ServerSecret),
 		secretHasher,
 	)
-	heartbeatUC := agent.NewHeartbeatUseCase(agentRepo, secretHasher)
-	unregisterUC := agent.NewUnregisterUseCase(agentRepo, secretHasher)
+	heartbeatUC := agent.NewHeartbeatUseCase(agentRepo)
+	unregisterUC := agent.NewUnregisterUseCase(agentRepo)
 	commandRepo := postgres.NewCommandRepository(a.pool)
 	capabilityRepo := postgres.NewCapabilityRepository(a.pool)
 	createCommandUC := appcommand.NewCreateUseCase(commandRepo, capabilityRepo)
-	leaseCommandUC := appcommand.NewLeaseUseCase(commandRepo)
+	leaseCommandUC := appcommand.NewLeaseUseCase(commandRepo, time.Duration(a.cfg.Commands.LeaseTTLSeconds)*time.Second)
 	executionCommandUC := appcommand.NewExecutionUseCase(commandRepo)
 	approvalCommandUC := appcommand.NewApprovalUseCase(commandRepo)
 	getCommandUC := appcommand.NewGetCommandUseCase(commandRepo)
-	capabilityUC := appcapability.NewSyncUseCase(agentRepo, capabilityRepo, secretHasher)
+	capabilityUC := appcapability.NewSyncUseCase(agentRepo, capabilityRepo)
 	return httpx.NewRouter(
+		httpx.RouterDeps{
+			Agents:        agentRepo,
+			OperatorToken: a.cfg.Auth.OperatorToken,
+			Logger:        a.log,
+		},
 		httpx.NewAgentHandler(registerUC, heartbeatUC, unregisterUC),
 		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC, approvalCommandUC, getCommandUC),
 		httpx.NewCapabilityHandler(capabilityUC),

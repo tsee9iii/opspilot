@@ -5,8 +5,8 @@
 # Runs scripts/install.sh against a mock Central server and stubbed system
 # tools in a private sandbox, then asserts the required behaviors:
 #
-#   - successful registration (agent_id + secret persisted)
-#   - registration response parsing (agent_id extracted from response)
+#   - successful registration (agent_id + signing_key persisted)
+#   - registration response parsing (agent_id + signing_key extracted)
 #   - invalid token -> non-zero exit, service NOT started
 #   - unreachable central -> non-zero exit, service NOT started
 #   - invalid URL -> non-zero exit, service NOT started
@@ -16,7 +16,7 @@
 #   - already registered -> No  (skip registration, exit 0)
 #   - already registered -> Yes (re-register, replace credentials)
 #   - no duplicate registration unless the operator chooses to re-register
-#   - agent_id persisted and used by heartbeat
+#   - agent_id persisted and used by HMAC-signed heartbeat + lease verification
 #   - no secret printed, no token printed after registration
 #
 # Usage: scripts/install-tests.sh
@@ -102,6 +102,21 @@ if [[ "$1" == "rand" ]]; then
   echo "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
   exit 0
 fi
+if [[ "$1" == "dgst" ]]; then
+  # Compute the HMAC-SHA256 the installer needs (openssl dgst -sha256 -mac HMAC
+  # -macopt key:KEY reading the canonical string on stdin). The key is used as
+  # its literal string bytes, matching agentsign.Sign. Uses `-c` so stdin stays
+  # available for the canonical data (a heredoc would consume it).
+  exec python3 -c '
+import hashlib, hmac, sys
+key = b""
+for a in sys.argv[1:]:
+    if a.startswith("key:"):
+        key = a.split(":", 1)[1].encode()
+data = sys.stdin.buffer.read()
+sys.stdout.write(hmac.new(key, data, hashlib.sha256).hexdigest() + "\n")
+' "$@"
+fi
 exit 0
 EOF
 
@@ -111,16 +126,42 @@ chmod +x "$SANDBOX/stubs"/*
 
 MOCK="$SANDBOX/mock/central.py"
 cat > "$MOCK" <<'PYEOF'
-import http.server, json, os, sys, uuid
+import http.server, json, os, sys, uuid, hashlib, hmac, time
 
 VALID_TOKENS = os.environ.get("VALID_TOKENS", "ops_rt_valid").split(",")
-STATE = {"registered": set(), "agent_id": None, "secret": None}
+STATE = {"registered": set(), "agent_id": None, "secret": None, "signing_key": None}
 LOGFILE = os.environ.get("CENTRAL_LOG")
 
 def log_line(line):
     if LOGFILE:
         with open(LOGFILE, "a") as f:
             f.write(line + "\n")
+
+# Verify an agent request against the HMAC signing protocol shared with
+# internal/agentsign: signature over
+#   agent_id "\n" timestamp "\n" nonce "\n" method "\n" path "\n" body
+# keyed with the per-agent signing key, within the 5-minute window.
+def auth_ok(path, raw, headers):
+    agent_id = headers.get("X-Agent-Id")
+    ts = headers.get("X-Agent-Timestamp")
+    nonce = headers.get("X-Agent-Nonce")
+    sig = headers.get("X-Agent-Signature")
+    if not agent_id or not ts or not nonce or not sig:
+        log_line("auth missing headers")
+        return False
+    try:
+        if abs(int(time.time()) - int(ts)) > 300:
+            log_line("auth stale timestamp")
+            return False
+    except ValueError:
+        log_line("auth bad timestamp")
+        return False
+    if agent_id != STATE["agent_id"]:
+        log_line("auth unknown agent")
+        return False
+    canonical = "\n".join([agent_id, ts, nonce, "POST", path, raw.decode()])
+    expected = hmac.new(STATE["signing_key"].encode(), canonical.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, sig)
 
 class H(http.server.BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -148,18 +189,33 @@ class H(http.server.BaseHTTPRequestHandler):
             STATE["registered"].add(tok)
             STATE["agent_id"] = str(uuid.uuid4())
             STATE["secret"] = data.get("secret")
+            STATE["signing_key"] = os.urandom(32).hex()
             log_line("registered agent_id=%s" % STATE["agent_id"])
-            self._send(201, {"agent_id": STATE["agent_id"], "status": "offline"})
+            log_line("signing_key=%s" % STATE["signing_key"])
+            self._send(201, {"agent_id": STATE["agent_id"], "status": "offline",
+                             "signing_key": STATE["signing_key"]})
             return
 
         if self.path == "/api/v1/agents/heartbeat":
-            ok = (data.get("agent_id") == STATE["agent_id"]
-                  and data.get("secret") == STATE["secret"])
-            if ok:
+            if auth_ok(self.path, raw, self.headers):
+                log_line("heartbeat ok")
                 self._send(200, {"status": "ok", "next_heartbeat": 30})
             else:
-                self._send(401, {"error": {"code": "invalid_credentials",
-                                           "message": "invalid agent credentials"}})
+                log_line("heartbeat auth-fail")
+                self._send(401, {"error": {"code": "invalid_signature",
+                                           "message": "invalid agent signature"}})
+            return
+
+        if self.path == "/api/v1/commands/lease":
+            if auth_ok(self.path, raw, self.headers):
+                log_line("lease ok")
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                log_line("lease auth-fail")
+                self._send(401, {"error": {"code": "invalid_signature",
+                                           "message": "invalid agent signature"}})
             return
 
         self._send(404, {"error": {"code": "not_found", "message": "not found"}})
@@ -247,12 +303,17 @@ ops_rt_valid" 2>&1)"
 rc=$?
 check "register exits 0" "$rc" "0"
 assert "agent_id persisted" test -s "$CONFIG" && grep -q '^agent_id: [0-9a-f-]' "$CONFIG"
+assert "signing_key persisted" test -s "$CONFIG" && grep -q '^signing_key: [0-9a-f]' "$CONFIG"
 assert "secret persisted" grep -q '^secret: 000102030405060708090a0b0c0d0e0f' "$CONFIG"
 assert "registration_token persisted" grep -q '^registration_token: ops_rt_valid' "$CONFIG"
 assert "central_url persisted" grep -q "^central_url: ${MOCK_URL}" "$CONFIG"
 assert "service started on success" grep -q '^start$' "$SYSTEMCTL_LOG"
 assert "service enabled on success" grep -q '^enable$' "$SYSTEMCTL_LOG"
 assert "heartbeat verified on success" grep -q 'agent heartbeat verified' <<< "$out"
+assert "lease verified on success" grep -q 'agent lease verified' <<< "$out"
+assert "heartbeat signature accepted" grep -q 'heartbeat ok' "$CENTRAL_LOG"
+assert "lease signature accepted" grep -q 'lease ok' "$CENTRAL_LOG"
+refute "heartbeat signature rejected" grep -q 'heartbeat auth-fail' "$CENTRAL_LOG"
 assert "agent registered logged" grep -q 'agent registered with id' <<< "$out"
 assert "config file mode 0600" test "$(stat -f '%Lp' "$CONFIG")" = "600"
 
@@ -266,6 +327,9 @@ check "register exits 0" "$rc" "0"
 mock_id="$(sed -n 's/^registered agent_id=//p' "$CENTRAL_LOG" | head -n 1)"
 persisted="$(agent_id_from "$CONFIG")"
 check "agent_id matches response" "$persisted" "$mock_id"
+mock_key="$(sed -n 's/^signing_key=//p' "$CENTRAL_LOG" | head -n 1)"
+persisted_key="$(sed -n 's/^signing_key: //p' "$CONFIG")"
+check "signing_key matches response" "$persisted_key" "$mock_key"
 
 echo "== 3. invalid token =="
 start_mock "ops_rt_valid"
@@ -318,6 +382,7 @@ assert "server.environment preserved" grep -q '^  environment: staging' "$CONFIG
 assert "poll_interval preserved" grep -q '^poll_interval: 10' "$CONFIG"
 assert "projects section preserved" grep -q '^projects:' "$CONFIG"
 assert "agent_id added" grep -q '^agent_id: [0-9a-f-]' "$CONFIG"
+assert "signing_key added" grep -q '^signing_key: [0-9a-f]' "$CONFIG"
 assert "old token replaced" grep -q '^registration_token: ops_rt_preserve' "$CONFIG"
 refute "old secret replaced" grep -q '^secret: old-secret' "$CONFIG"
 
@@ -328,6 +393,7 @@ run_install "${MOCK_URL}
 ops_rt_rerun" >/dev/null 2>&1
 before_id="$(agent_id_from "$CONFIG")"
 before_secret="$(sed -n 's/^secret: //p' "$CONFIG")"
+before_key="$(sed -n 's/^signing_key: //p' "$CONFIG")"
 before_token="$(sed -n 's/^registration_token: //p' "$CONFIG")"
 before_calls="$(grep -c 'register token=' "$CENTRAL_LOG" || true)"
 
@@ -336,14 +402,17 @@ rc=$?
 check "rerun (No) exits 0" "$rc" "0"
 after_id="$(agent_id_from "$CONFIG")"
 after_secret="$(sed -n 's/^secret: //p' "$CONFIG")"
+after_key="$(sed -n 's/^signing_key: //p' "$CONFIG")"
 after_token="$(sed -n 's/^registration_token: //p' "$CONFIG")"
 after_calls="$(grep -c 'register token=' "$CENTRAL_LOG" || true)"
 check "rerun (No): agent_id unchanged" "$after_id" "$before_id"
 check "rerun (No): secret unchanged" "$after_secret" "$before_secret"
+check "rerun (No): signing_key unchanged" "$after_key" "$before_key"
 check "rerun (No): registration_token unchanged" "$after_token" "$before_token"
 check "rerun (No): no extra register call" "$after_calls" "$before_calls"
 assert "rerun (No): service started" grep -q '^start$' "$SYSTEMCTL_LOG"
 assert "rerun (No): heartbeat verified" grep -q 'agent heartbeat verified' <<< "$out"
+assert "rerun (No): lease verified" grep -q 'agent lease verified' <<< "$out"
 
 echo "== 8. already registered -> Yes (re-register) =="
 start_mock "ops_rt_yes1,ops_rt_yes2"
@@ -351,6 +420,7 @@ rm -rf "$CONFIG_DIR"; mkdir -p "$CONFIG_DIR"
 run_install "${MOCK_URL}
 ops_rt_yes1" >/dev/null 2>&1
 before_id="$(agent_id_from "$CONFIG")"
+before_key="$(sed -n 's/^signing_key: //p' "$CONFIG")"
 
 # Answer Yes to re-register; empty Central URL (keeps existing); fresh token.
 out="$(run_install "y
@@ -361,9 +431,11 @@ check "re-register (Yes) exits 0" "$rc" "0"
 after_id="$(agent_id_from "$CONFIG")"
 after_secret="$(sed -n 's/^secret: //p' "$CONFIG")"
 after_token="$(sed -n 's/^registration_token: //p' "$CONFIG")"
+after_key="$(sed -n 's/^signing_key: //p' "$CONFIG")"
 assert "re-register: agent_id changed" test -n "$after_id" && test "$after_id" != "$before_id"
 check "re-register: token replaced" "$after_token" "ops_rt_yes2"
 check "re-register: secret regenerated" "$after_secret" "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+assert "re-register: signing_key replaced" test -n "$after_key" && test "$after_key" != "$before_key"
 assert "re-register: heartbeat verified" grep -q 'agent heartbeat verified' <<< "$out"
 
 echo "== 9. no secret printed / no token printed =="
@@ -373,7 +445,7 @@ out="$(run_install "${MOCK_URL}
 ops_rt_secret" 2>&1)"
 check "secret not printed" "$(grep -c '000102030405060708090a0b0c0d0e0f' <<< "$out" || true)" "0"
 check "token not printed after registration" "$(grep -c 'ops_rt_secret' <<< "$out" || true)" "0"
-assert "request body not left behind" test -z "$(find "$WORK" -name 'reg-body.json' -o -name 'hb-body.json')"
+assert "request body not left behind" test -z "$(find "$WORK" -name 'reg-body.json' -o -name 'hb-body.json' -o -name 'lease-body.json')"
 
 echo "== 10. no duplicate registration =="
 start_mock "ops_rt_dup"

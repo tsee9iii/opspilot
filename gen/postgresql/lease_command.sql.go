@@ -12,6 +12,29 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const expireStaleLeases = `-- name: ExpireStaleLeases :exec
+UPDATE commands
+SET status = 'pending',
+    lease_owner = NULL,
+    leased_at = NULL
+WHERE status = 'leased'
+  AND lease_owner = $1
+  AND leased_at < $2
+`
+
+type ExpireStaleLeasesParams struct {
+	LeaseOwner pgtype.Text
+	Before     pgtype.Timestamptz
+}
+
+// Return leases held by the agent that have outlived the lease TTL back to
+// pending so they can be leased again. Lazy expiry: run at lease time, never
+// from a background scheduler.
+func (q *Queries) ExpireStaleLeases(ctx context.Context, arg ExpireStaleLeasesParams) error {
+	_, err := q.db.Exec(ctx, expireStaleLeases, arg.LeaseOwner, arg.Before)
+	return err
+}
+
 const leaseNextCommand = `-- name: LeaseNextCommand :one
 UPDATE commands
 SET status = 'leased',
