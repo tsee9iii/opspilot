@@ -1,0 +1,82 @@
+// Command mcp runs the OpsPilot MCP server: a standalone integration layer
+// that exposes the platform's application use cases as stable MCP tools over
+// stdio. It is an adapter only — it contains no business logic and never calls
+// the Central REST API.
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/joho/godotenv"
+
+	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
+	appdispatch "github.com/tsee9iii/opspilot/internal/application/dispatch"
+	appinventory "github.com/tsee9iii/opspilot/internal/application/inventory"
+	"github.com/tsee9iii/opspilot/internal/infrastructure/postgres"
+	"github.com/tsee9iii/opspilot/internal/mcp"
+	"github.com/tsee9iii/opspilot/internal/mcp/tools"
+	"github.com/tsee9iii/opspilot/pkg/config"
+	"github.com/tsee9iii/opspilot/pkg/logger"
+)
+
+func main() {
+	if err := godotenv.Load(); err != nil {
+		log.Println("godotenv: no .env file found, relying on environment variables")
+	}
+
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("mcp: %v", err)
+	}
+
+	zl, err := logger.New(cfg.Logger.Level, cfg.Env == "production")
+	if err != nil {
+		log.Fatalf("mcp: %v", err)
+	}
+	defer func() { _ = zl.Sync() }()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	pool, err := postgres.New(ctx, cfg)
+	if err != nil {
+		log.Fatalf("mcp: %v", err)
+	}
+	defer pool.Close()
+
+	pingCtx, cancelPing := context.WithTimeout(ctx, 5*time.Second)
+	defer cancelPing()
+	if err := pool.Ping(pingCtx); err != nil {
+		log.Fatalf("mcp: ping postgres: %v", err)
+	}
+
+	commandRepo := postgres.NewCommandRepository(pool)
+	capabilityRepo := postgres.NewCapabilityRepository(pool)
+	inventoryRepo := postgres.NewInventoryRepository(pool)
+
+	createUC := appcommand.NewCreateUseCase(commandRepo, capabilityRepo)
+	getUC := appcommand.NewGetCommandUseCase(commandRepo)
+	dispatchUC := appdispatch.NewDispatchUseCase(createUC, getUC)
+
+	toolSet := tools.Build(tools.Dependencies{
+		Servers:               appinventory.NewListServersUseCase(inventoryRepo),
+		Agents:                appinventory.NewListAgentsUseCase(inventoryRepo),
+		Commands:              appinventory.NewListCommandsUseCase(inventoryRepo),
+		GetCommand:            getUC,
+		Dispatch:              dispatchUC,
+		DefaultTimeoutSeconds: cfg.MCP.ExecutionTimeoutSeconds,
+	})
+
+	server := mcp.NewServer(toolSet, os.Stdin, os.Stdout)
+	zl.Info("mcp server listening on stdio")
+
+	if err := server.Run(ctx); err != nil {
+		log.Fatalf("mcp: %v", err)
+	}
+	zl.Info("mcp server stopped")
+}

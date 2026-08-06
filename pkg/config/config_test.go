@@ -23,6 +23,7 @@ func clearEnv(t *testing.T) {
 		"OPSPILOT_DB_SSLMODE",
 		"OPSPILOT_LOG_LEVEL",
 		"OPSPILOT_AUTH_SERVER_SECRET",
+		"OPSPILOT_MCP_EXECUTION_TIMEOUT_SECONDS",
 	} {
 		t.Setenv(k, "")
 	}
@@ -58,6 +59,9 @@ func TestLoadDefaultsOnly(t *testing.T) {
 	}
 	if cfg.Auth.ServerSecret != "dev-only-secret-change-me" {
 		t.Fatalf("unexpected auth: %+v", cfg.Auth)
+	}
+	if cfg.MCP.ExecutionTimeoutSeconds != 300 {
+		t.Fatalf("unexpected mcp: %+v", cfg.MCP)
 	}
 	if cfg.Env != "development" {
 		t.Fatalf("unexpected env: %q", cfg.Env)

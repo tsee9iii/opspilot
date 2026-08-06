@@ -1,5 +1,5 @@
-.PHONY: all tidy fmt vet lint test build build-central build-agent \
-        run-central run-agent \
+.PHONY: all tidy fmt vet lint test build build-central build-agent build-mcp \
+        run-central run-agent run-mcp \
         dev-up dev-down sqlc-generate clean help
 
 SHELL := /bin/bash
@@ -7,6 +7,7 @@ SHELL := /bin/bash
 BIN_DIR := bin
 CENTRAL_BIN := $(BIN_DIR)/central
 AGENT_BIN := $(BIN_DIR)/agent
+MCP_BIN := $(BIN_DIR)/mcp
 
 all: fmt vet build
 
@@ -22,13 +23,16 @@ vet:
 lint:
 	golangci-lint run ./...
 
-build: build-central build-agent
+build: build-central build-agent build-mcp
 
 build-central:
 	go build -o $(CENTRAL_BIN) ./cmd/central
 
 build-agent:
 	go build -o $(AGENT_BIN) ./cmd/agent
+
+build-mcp:
+	go build -o $(MCP_BIN) ./cmd/mcp
 
 test:
 	go test ./...
@@ -38,6 +42,9 @@ run-central:
 
 run-agent:
 	go run ./cmd/agent
+
+run-mcp:
+	go run ./cmd/mcp
 
 dev-up:
 	docker compose -f deployments/docker-compose.yml up -d --build

@@ -28,6 +28,11 @@ type Config struct {
 	Auth struct {
 		ServerSecret string
 	}
+	MCP struct {
+		// ExecutionTimeoutSeconds is the default timeout for dispatched
+		// workflow commands that require no operator confirmation.
+		ExecutionTimeoutSeconds int
+	}
 }
 
 // fileConfig is the on-disk YAML representation. YAML keys map onto the Config
@@ -52,6 +57,9 @@ type fileConfig struct {
 	Auth struct {
 		ServerSecret string `yaml:"server_secret"`
 	} `yaml:"auth"`
+	MCP struct {
+		ExecutionTimeoutSeconds int `yaml:"execution_timeout_seconds"`
+	} `yaml:"mcp"`
 }
 
 // defaultConfigPath is used when OPSPILOT_CONFIG is not set.
@@ -95,6 +103,8 @@ func defaults() *Config {
 	cfg.Logger.Level = "info"
 
 	cfg.Auth.ServerSecret = "dev-only-secret-change-me"
+
+	cfg.MCP.ExecutionTimeoutSeconds = 300
 
 	return cfg
 }
@@ -161,6 +171,10 @@ func applyFile(fc *fileConfig, cfg *Config) {
 	if fc.Auth.ServerSecret != "" {
 		cfg.Auth.ServerSecret = fc.Auth.ServerSecret
 	}
+
+	if fc.MCP.ExecutionTimeoutSeconds != 0 {
+		cfg.MCP.ExecutionTimeoutSeconds = fc.MCP.ExecutionTimeoutSeconds
+	}
 }
 
 // applyEnv overlays environment variables (highest priority).
@@ -180,6 +194,8 @@ func applyEnv(cfg *Config) {
 	cfg.Logger.Level = getEnv("OPSPILOT_LOG_LEVEL", cfg.Logger.Level)
 
 	cfg.Auth.ServerSecret = getEnv("OPSPILOT_AUTH_SERVER_SECRET", cfg.Auth.ServerSecret)
+
+	cfg.MCP.ExecutionTimeoutSeconds = getEnvInt("OPSPILOT_MCP_EXECUTION_TIMEOUT_SECONDS", cfg.MCP.ExecutionTimeoutSeconds)
 }
 
 func getEnv(key, fallback string) string {
