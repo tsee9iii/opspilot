@@ -21,6 +21,7 @@ import (
 const (
 	WorkflowDiagnoseTool = "workflow.diagnose"
 	WorkflowDeployTool   = "workflow.deploy"
+	FileReadTool         = "file.read"
 )
 
 const (

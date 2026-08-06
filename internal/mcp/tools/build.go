@@ -27,8 +27,10 @@ type Dependencies struct {
 func Build(deps Dependencies) *mcp.ToolSet {
 	diagnose := NewWorkflowDiagnoseTool(deps.Dispatch)
 	deploy := NewWorkflowDeployTool(deps.Dispatch)
+	read := NewFileReadTool(deps.Dispatch)
 	diagnose.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 	deploy.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	read.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 
 	return mcp.NewToolSet(
 		NewPingTool(deps.Pinger),
@@ -38,5 +40,6 @@ func Build(deps Dependencies) *mcp.ToolSet {
 		NewGetCommandTool(deps.GetCommand),
 		diagnose,
 		deploy,
+		read,
 	)
 }

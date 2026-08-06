@@ -28,6 +28,7 @@ func TestBuildDefinesMilestoneTools(t *testing.T) {
 		"get_command",
 		"workflow_diagnose",
 		"workflow_deploy",
+		"file_read",
 	}
 	wantCategory := map[string]string{
 		"ping":              CategorySystem,
@@ -37,13 +38,15 @@ func TestBuildDefinesMilestoneTools(t *testing.T) {
 		"get_command":       CategoryInventory,
 		"workflow_diagnose": CategoryDiagnostics,
 		"workflow_deploy":   CategoryDeployment,
+		"file_read":         CategoryInvestigation,
 	}
 	validCategory := map[string]bool{
-		CategoryInventory:   true,
-		CategoryWorkflow:    true,
-		CategoryDeployment:  true,
-		CategoryDiagnostics: true,
-		CategorySystem:      true,
+		CategoryInventory:     true,
+		CategoryWorkflow:      true,
+		CategoryDeployment:    true,
+		CategoryDiagnostics:   true,
+		CategorySystem:        true,
+		CategoryInvestigation: true,
 	}
 
 	defs := ts.Definitions()
@@ -76,7 +79,9 @@ func TestBuildDefinesMilestoneTools(t *testing.T) {
 }
 
 func TestWorkflowDispatchToolConstants(t *testing.T) {
-	if dispatch.WorkflowDiagnoseTool != "workflow.diagnose" || dispatch.WorkflowDeployTool != "workflow.deploy" {
-		t.Fatalf("unexpected wire constants: %q %q", dispatch.WorkflowDiagnoseTool, dispatch.WorkflowDeployTool)
+	if dispatch.WorkflowDiagnoseTool != "workflow.diagnose" ||
+		dispatch.WorkflowDeployTool != "workflow.deploy" ||
+		dispatch.FileReadTool != "file.read" {
+		t.Fatalf("unexpected wire constants: %q %q %q", dispatch.WorkflowDiagnoseTool, dispatch.WorkflowDeployTool, dispatch.FileReadTool)
 	}
 }

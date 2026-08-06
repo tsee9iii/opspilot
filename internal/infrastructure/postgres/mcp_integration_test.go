@@ -39,10 +39,10 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 	capabilityRepo := NewCapabilityRepository(pool)
 	inventoryRepo := NewInventoryRepository(pool)
 
-	// Execution tools require operator confirmation: register workflow.diagnose
-	// and workflow.deploy as confirmation-required capabilities so created
-	// commands stay pending and the tools return immediately.
-	for _, toolName := range []string{"workflow.diagnose", "workflow.deploy"} {
+	// Execution tools require operator confirmation: register workflow.diagnose,
+	// workflow.deploy and file.read as confirmation-required capabilities so
+	// created commands stay pending and the tools return immediately.
+	for _, toolName := range []string{"workflow.diagnose", "workflow.deploy", "file.read"} {
 		if err := capabilityRepo.Upsert(ctx, agent, appcapability.Capability{
 			ToolName: toolName, Version: "1.0.0", Description: "workflow",
 			ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "required",
@@ -278,6 +278,7 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 			"get_command":       {"command_id": commandID.String()},
 			"workflow_diagnose": {"agent_id": agent.String()},
 			"workflow_deploy":   {"agent_id": agent.String(), "project": "merchant-api"},
+			"file_read":         {"agent_id": agent.String(), "path": "docker-compose.yml"},
 		}
 		for _, tool := range listing.Result.Tools {
 			if tool.OutputSchema.Required == nil {
