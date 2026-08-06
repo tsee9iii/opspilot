@@ -28,6 +28,12 @@ jobs:
           - target: central
             goarch: arm64
             asset: opspilot-central-linux-arm64
+          - target: mcp
+            goarch: amd64
+            asset: opspilot-mcp-linux-amd64
+          - target: mcp
+            goarch: arm64
+            asset: opspilot-mcp-linux-arm64
 
     env:
       CGO_ENABLED: "0"
