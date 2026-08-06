@@ -87,8 +87,13 @@ type contentItem struct {
 	Text string `json:"text"`
 }
 
-// callResult is the MCP tools/call result envelope.
+// callResult is the MCP tools/call result envelope. When a tool advertises
+// outputSchema, the protocol requires the result to also carry
+// structuredContent: the same object serialized into content's text, as raw
+// JSON. structuredContent is only populated for successful results; error
+// results carry the machine-readable error as text.
 type callResult struct {
-	Content []contentItem `json:"content"`
-	IsError bool          `json:"isError,omitempty"`
+	Content           []contentItem   `json:"content"`
+	StructuredContent json.RawMessage `json:"structuredContent,omitempty"`
+	IsError           bool            `json:"isError,omitempty"`
 }

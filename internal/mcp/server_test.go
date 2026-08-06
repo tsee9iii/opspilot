@@ -165,6 +165,13 @@ func TestServerToolsCallSuccess(t *testing.T) {
 	if result["isError"] != nil {
 		t.Fatalf("expected success result: %v", result)
 	}
+	sc, hasSC := result["structuredContent"].(map[string]any)
+	if !hasSC {
+		t.Fatalf("expected structuredContent object: %v", result)
+	}
+	if _, present := sc["servers"]; !present {
+		t.Fatalf("structuredContent must carry the same object as content: %v", sc)
+	}
 }
 
 func TestServerToolsCallToolError(t *testing.T) {
@@ -177,6 +184,9 @@ func TestServerToolsCallToolError(t *testing.T) {
 	result := responses[0]["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("expected isError: %v", result)
+	}
+	if _, ok := result["structuredContent"]; ok {
+		t.Fatalf("error results must not carry structuredContent: %v", result)
 	}
 	text := result["content"].([]any)[0].(map[string]any)["text"].(string)
 	var te ToolError

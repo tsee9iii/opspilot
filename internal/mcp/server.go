@@ -187,11 +187,15 @@ func (s *Server) handleToolsCall(ctx context.Context, req rpcRequest) []byte {
 		})
 		return marshal(newResponse(req.ID, result))
 	}
+	// out is the tool's already-marshaled result. It is reused verbatim for
+	// structuredContent and as the human-readable content text, so the result
+	// object is serialized exactly once.
 	if len(out) == 0 {
 		out = json.RawMessage(`{}`)
 	}
 	result, _ := json.Marshal(callResult{
-		Content: []contentItem{{Type: "text", Text: string(out)}},
+		Content:           []contentItem{{Type: "text", Text: string(out)}},
+		StructuredContent: out,
 	})
 	return marshal(newResponse(req.ID, result))
 }

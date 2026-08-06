@@ -39,13 +39,16 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 	capabilityRepo := NewCapabilityRepository(pool)
 	inventoryRepo := NewInventoryRepository(pool)
 
-	// The execution tool requires operator confirmation: register workflow.diagnose
-	// as a confirmation-required capability so the created command stays pending.
-	if err := capabilityRepo.Upsert(ctx, agent, appcapability.Capability{
-		ToolName: "workflow.diagnose", Version: "1.0.0", Description: "diagnose",
-		ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "required",
-	}); err != nil {
-		t.Fatalf("register capability: %v", err)
+	// Execution tools require operator confirmation: register workflow.diagnose
+	// and workflow.deploy as confirmation-required capabilities so created
+	// commands stay pending and the tools return immediately.
+	for _, toolName := range []string{"workflow.diagnose", "workflow.deploy"} {
+		if err := capabilityRepo.Upsert(ctx, agent, appcapability.Capability{
+			ToolName: toolName, Version: "1.0.0", Description: "workflow",
+			ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "required",
+		}); err != nil {
+			t.Fatalf("register capability: %v", err)
+		}
 	}
 
 	createUC := appcommand.NewCreateUseCase(commandRepo, capabilityRepo)
@@ -84,6 +87,7 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		if res.IsError {
 			t.Fatalf("unexpected error: %s", res.Text)
 		}
+		assertStructuredContent(t, res)
 		var got struct {
 			Servers []struct {
 				ID               string `json:"id"`
@@ -113,6 +117,7 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		if res.IsError {
 			t.Fatalf("unexpected error: %s", res.Text)
 		}
+		assertStructuredContent(t, res)
 		var got struct {
 			Agents []map[string]any `json:"agents"`
 		}
@@ -132,6 +137,7 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		if res.IsError {
 			t.Fatalf("unexpected error: %s", res.Text)
 		}
+		assertStructuredContent(t, res)
 		var got struct {
 			Commands []map[string]any `json:"commands"`
 		}
@@ -154,6 +160,7 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		if res.IsError {
 			t.Fatalf("unexpected error: %s", res.Text)
 		}
+		assertStructuredContent(t, res)
 		var got struct {
 			Command map[string]any `json:"command"`
 		}
@@ -170,6 +177,7 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		if res.IsError {
 			t.Fatalf("unexpected error: %s", res.Text)
 		}
+		assertStructuredContent(t, res)
 		var got struct {
 			Service        string `json:"service"`
 			Version        string `json:"version"`
@@ -194,6 +202,7 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		if res.IsError {
 			t.Fatalf("unexpected error: %s", res.Text)
 		}
+		assertStructuredContent(t, res)
 		var got struct {
 			CommandID string `json:"command_id"`
 			Status    string `json:"status"`
@@ -214,11 +223,89 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 			t.Fatalf("expected pending confirmation, got %q", confirmation)
 		}
 	})
+
+	t.Run("workflow_deploy requires approval before execution", func(t *testing.T) {
+		res := call("workflow_deploy", map[string]any{"agent_id": agent.String(), "project": "merchant-api"})
+		if res.IsError {
+			t.Fatalf("unexpected error: %s", res.Text)
+		}
+		assertStructuredContent(t, res)
+		var got struct {
+			CommandID string `json:"command_id"`
+			Status    string `json:"status"`
+		}
+		if err := json.Unmarshal([]byte(res.Text), &got); err != nil {
+			t.Fatalf("decode result: %v", err)
+		}
+		if got.Status != "awaiting_approval" {
+			t.Fatalf("expected awaiting_approval, got %q", got.Status)
+		}
+	})
+
+	t.Run("every advertised tool returns structuredContent", func(t *testing.T) {
+		list, err := json.Marshal(map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+		})
+		if err != nil {
+			t.Fatalf("marshal tools/list: %v", err)
+		}
+		var out bytes.Buffer
+		if err := mcp.NewServer(toolSet, bytes.NewReader(append(list, '\n')), &out).Run(ctx); err != nil {
+			t.Fatalf("run tools/list: %v", err)
+		}
+		var listing struct {
+			Result struct {
+				Tools []struct {
+					Name         string `json:"name"`
+					OutputSchema struct {
+						Required []string `json:"required"`
+					} `json:"outputSchema"`
+				} `json:"tools"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &listing); err != nil {
+			t.Fatalf("decode tools/list: %v", err)
+		}
+		if len(listing.Result.Tools) == 0 {
+			t.Fatal("tools/list returned no tools")
+		}
+
+		argsByTool := map[string]map[string]any{
+			"ping":              {},
+			"list_servers":      {},
+			"list_agents":       {},
+			"list_commands":     {},
+			"get_command":       {"command_id": commandID.String()},
+			"workflow_diagnose": {"agent_id": agent.String()},
+			"workflow_deploy":   {"agent_id": agent.String(), "project": "merchant-api"},
+		}
+		for _, tool := range listing.Result.Tools {
+			if tool.OutputSchema.Required == nil {
+				t.Fatalf("tool %s does not advertise outputSchema", tool.Name)
+			}
+			args, ok := argsByTool[tool.Name]
+			if !ok {
+				t.Fatalf("tool %s missing from test arguments", tool.Name)
+			}
+			assertStructuredContent(t, call(tool.Name, args))
+		}
+	})
+
+	t.Run("tool errors carry text only, never structuredContent", func(t *testing.T) {
+		res := call("get_command", map[string]any{"command_id": uuid.New().String()})
+		if !res.IsError {
+			t.Fatalf("expected error, got: %s", res.Text)
+		}
+		if len(res.StructuredContent) != 0 {
+			t.Fatalf("error results must not carry structuredContent: %s", res.StructuredContent)
+		}
+	})
 }
 
 type callOutput struct {
-	Text    string
-	IsError bool
+	Text              string
+	StructuredContent json.RawMessage
+	IsError           bool
 }
 
 func decodeCallOutput(t *testing.T, data []byte) callOutput {
@@ -229,7 +316,8 @@ func decodeCallOutput(t *testing.T, data []byte) callOutput {
 				Type string `json:"type"`
 				Text string `json:"text"`
 			} `json:"content"`
-			IsError bool `json:"isError"`
+			StructuredContent json.RawMessage `json:"structuredContent"`
+			IsError           bool            `json:"isError"`
 		} `json:"result"`
 		Error *json.RawMessage `json:"error"`
 	}
@@ -242,7 +330,36 @@ func decodeCallOutput(t *testing.T, data []byte) callOutput {
 	if len(msg.Result.Content) != 1 {
 		t.Fatalf("expected one content item, got %d", len(msg.Result.Content))
 	}
-	return callOutput{Text: msg.Result.Content[0].Text, IsError: msg.Result.IsError}
+	return callOutput{
+		Text:              msg.Result.Content[0].Text,
+		StructuredContent: msg.Result.StructuredContent,
+		IsError:           msg.Result.IsError,
+	}
+}
+
+// assertStructuredContent verifies the MCP protocol guarantee: every successful
+// tool call that advertises outputSchema also returns structuredContent, and it
+// carries the same object serialized into content.
+func assertStructuredContent(t *testing.T, res callOutput) {
+	t.Helper()
+	if res.IsError {
+		t.Fatalf("expected success: %s", res.Text)
+	}
+	if len(res.StructuredContent) == 0 {
+		t.Fatalf("successful tool result must return structuredContent, got %q", res.Text)
+	}
+	var content, structured any
+	if err := json.Unmarshal([]byte(res.Text), &content); err != nil {
+		t.Fatalf("content is not valid JSON: %v", err)
+	}
+	if err := json.Unmarshal(res.StructuredContent, &structured); err != nil {
+		t.Fatalf("structuredContent is not valid JSON: %v", err)
+	}
+	contentJSON, _ := json.Marshal(content)
+	structuredJSON, _ := json.Marshal(structured)
+	if string(contentJSON) != string(structuredJSON) {
+		t.Fatalf("structuredContent must equal content:\ncontent:          %s\nstructuredContent: %s", contentJSON, structuredJSON)
+	}
 }
 
 func insertCompletedCommand(t *testing.T, ctx context.Context, pool *pgxpool.Pool, agentID uuid.UUID, tool string) uuid.UUID {
