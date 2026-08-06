@@ -10,6 +10,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/tsee9iii/opspilot/internal/agent"
+	"github.com/tsee9iii/opspilot/internal/agent/tools/diagnose"
 	"github.com/tsee9iii/opspilot/internal/agent/tools/docker"
 	"github.com/tsee9iii/opspilot/internal/agent/tools/git"
 	httptool "github.com/tsee9iii/opspilot/internal/agent/tools/http"
@@ -68,7 +69,10 @@ func main() {
 	registry.Register(git.NewGitPullTool())
 	registry.Register(httptool.NewHTTPCheckTool())
 
-	a := agent.New(agentCfg, zl, agent.NewRegistryExecutor(registry, agentCfg.Policy()), registry)
+	exec := agent.NewRegistryExecutor(registry, agentCfg.Policy())
+	registry.Register(diagnose.NewDiagnoseTool(exec))
+
+	a := agent.New(agentCfg, zl, exec, registry)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
