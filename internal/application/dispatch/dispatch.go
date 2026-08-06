@@ -23,6 +23,7 @@ const (
 	WorkflowDeployTool   = "workflow.deploy"
 	FileReadTool         = "file.read"
 	FilesystemListTool   = "filesystem.list"
+	DockerInspectTool    = "docker.inspect"
 )
 
 const (

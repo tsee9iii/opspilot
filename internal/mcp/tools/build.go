@@ -29,10 +29,12 @@ func Build(deps Dependencies) *mcp.ToolSet {
 	deploy := NewWorkflowDeployTool(deps.Dispatch)
 	read := NewFileReadTool(deps.Dispatch)
 	list := NewFilesystemListTool(deps.Dispatch)
+	inspect := NewDockerInspectTool(deps.Dispatch)
 	diagnose.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 	deploy.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 	read.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 	list.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	inspect.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 
 	return mcp.NewToolSet(
 		NewPingTool(deps.Pinger),
@@ -44,5 +46,6 @@ func Build(deps Dependencies) *mcp.ToolSet {
 		deploy,
 		read,
 		list,
+		inspect,
 	)
 }

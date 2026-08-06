@@ -64,6 +64,7 @@ func main() {
 	registry.Register(docker.NewDockerPsTool())
 	registry.Register(docker.NewDockerLogsTool())
 	registry.Register(docker.NewDockerRestartTool())
+	registry.Register(docker.NewDockerInspectTool())
 	registry.Register(systemctl.NewSystemCtlStatusTool())
 	registry.Register(systemctl.NewSystemCtlRestartTool())
 	registry.Register(journal.NewJournalLogsTool())
