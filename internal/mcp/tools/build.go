@@ -36,9 +36,11 @@ type Dependencies struct {
 //
 //   - inventory    — pure central/PostgreSQL reads (ping, servers, agents,
 //     commands, health, alerts). These never contact agents.
-//   - investigate  — inventory plus safe diagnostic tools that dispatch
-//     read-only inspection to agents (file_read, filesystem_list,
-//     docker_inspect, workflow_diagnose), always policy-enforced.
+//   - investigate  — inventory plus safe diagnostic and remote-investigation
+//     tools that dispatch read-only inspection to agents (file_read,
+//     filesystem_list, docker_inspect, workflow_diagnose, pm2_list, pm2_logs,
+//     docker_list, docker_logs, journal_logs, git_status, git_current_commit,
+//     git_branch), always policy-enforced.
 //   - operate      — investigate plus the mutating deploy tool
 //     (workflow_deploy). MCP-created mutations always require operator
 //     confirmation and are never self-approved.
@@ -88,9 +90,29 @@ func diagnosticsTools(deps Dependencies) []mcp.Tool {
 	list := NewFilesystemListTool(deps.Dispatch)
 	inspect := NewDockerInspectTool(deps.Dispatch)
 	diagnose := NewWorkflowDiagnoseTool(deps.Dispatch)
+	pm2List := NewPM2ListTool(deps.Dispatch)
+	pm2Logs := NewPM2LogsTool(deps.Dispatch)
+	dockerList := NewDockerListTool(deps.Dispatch)
+	dockerLogs := NewDockerLogsTool(deps.Dispatch)
+	journalLogs := NewJournalLogsTool(deps.Dispatch)
+	gitStatus := NewGitStatusTool(deps.Dispatch)
+	gitCurrentCommit := NewGitCurrentCommitTool(deps.Dispatch)
+	gitBranch := NewGitBranchTool(deps.Dispatch)
 	read.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 	list.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 	inspect.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
 	diagnose.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
-	return []mcp.Tool{read, list, inspect, diagnose}
+	pm2List.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	pm2Logs.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	dockerList.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	dockerLogs.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	journalLogs.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	gitStatus.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	gitCurrentCommit.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	gitBranch.SetDefaultTimeoutSeconds(deps.DefaultTimeoutSeconds)
+	return []mcp.Tool{
+		read, list, inspect, diagnose,
+		pm2List, pm2Logs, dockerList, dockerLogs, journalLogs,
+		gitStatus, gitCurrentCommit, gitBranch,
+	}
 }

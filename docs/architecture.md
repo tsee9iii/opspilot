@@ -217,7 +217,7 @@ erDiagram
 - **Fail-closed configuration**: central refuses to start with development defaults (`OPSPILOT_AUTH_SERVER_SECRET` / `OPSPILOT_OPERATOR_TOKEN` / `OPSPILOT_DB_PASSWORD` unset), with `sslmode=disable`, or binding `0.0.0.0` in production. Validation errors name the offending variable but never its value.
 - **Operator-authenticated command creation**: `POST /api/v1/commands` requires the operator bearer token so only authenticated operators can enqueue commands.
 - **Fail-closed capability resolution**: a command for a tool with no registered capability is rejected (`capability_not_found`); a command for a registered-but-disabled capability is rejected (`capability_unavailable`). Capabilities are never implicitly approved.
-- **MCP modes**: the MCP toolset is built from a mode that defaults to `inventory` and only ever grows. `inventory` exposes pure reads over PostgreSQL (ping, inventory, health, alerts) and never contacts agents. `investigate` adds read-only agent tools (`file_read`, `filesystem_list`, `docker_inspect`, `workflow_diagnose`) that are still policy-enforced. `operate` adds `workflow_deploy`; any command created through MCP is always recorded as `source=mcp` and stays pending until an operator approves it — it is never self-approved. The deprecated `OPSPILOT_MCP_READ_ONLY` flag maps `true→inventory` / `false→operate`; an explicit `mode` always wins. The MCP service should run as a least-privilege database role.
+- **MCP modes**: the MCP toolset is built from a mode that defaults to `inventory` and only ever grows. `inventory` exposes pure reads over PostgreSQL (ping, inventory, health, alerts) and never contacts agents. `investigate` adds read-only agent tools (`file_read`, `filesystem_list`, `docker_inspect`, `workflow_diagnose`) and the remote-investigation tools (`pm2_list`, `pm2_logs`, `docker_list`, `docker_logs`, `journal_logs`, `git_status`, `git_current_commit`, `git_branch`) that are still policy-enforced. `operate` adds `workflow_deploy`; any command created through MCP is always recorded as `source=mcp` and stays pending until an operator approves it — it is never self-approved. The deprecated `OPSPILOT_MCP_READ_ONLY` flag maps `true→inventory` / `false→operate`; an explicit `mode` always wins. The MCP service should run as a least-privilege database role.
 - **Operator audit actor**: every operator-authenticated route (command create/approve, alert list/acknowledge) requires the `X-Operator-Actor` header, and the actor is persisted on the affected record so approval chains are attributable.
 - **Webhook delivery**: outbound alert webhooks are disabled by default, require HTTPS in production, sign each raw payload with HMAC-SHA256 (`X-Opspilot-Signature`), carry an event id (`X-Opspilot-Event-Id`) for idempotency, and retry at most three times with backoff. Response bodies are never logged.
 
@@ -298,6 +298,36 @@ The file and HTTP tools are fail-closed:
 
 - **`file.read` / `filesystem.list`** resolve paths relative to a configured project root; `..` traversal and symlink escapes are rejected. Absolute paths are denied by default and only honoured when the operator sets `filesystem.allow_absolute_paths: true`.
 - **`http.check`** is SSRF-hardened. Restricted ranges (loopback, link-local incl. cloud metadata `169.254.169.254`, RFC1918 private, CGNAT, multicast, reserved) are denied by default. Every resolved IP is validated before connecting, the connection is pinned to the validated IP (defeating DNS rebinding), redirects are never followed, and response bodies/headers are never returned. Configuring `http_check.allow_endpoints` / `allow_hosts` / `allow_cidrs` restricts the tool to exactly those destinations; `http_check.allow_private` opts back into private ranges.
+
+### MCP remote-investigation tools
+
+The `investigate` tier adds eight remote-investigation tools that dispatch bounded, read-only agent commands through the existing command pipeline (never by duplicating shell execution in the MCP layer). Each requires `agent_id`, relays the exact agent payload, preserves the agent's structured JSON result, and is described as investigation-only. They are **remote** investigation tools, not database-only inventory operations: a call to `pm2_list` causes the targeted agent to run `pm2 jlist`, `docker_logs` causes it to run `docker logs --tail N`, and so on. `inventory` remains the safest tier for broad Telegram/Hermes use because none of these tools contact agents.
+
+| MCP tool | Agent tool dispatched | Question it answers |
+| -------- | --------------------- | ------------------- |
+| `pm2_list` | `pm2.list` | “Which PM2 processes are running?” |
+| `pm2_logs` | `pm2.logs` | “Show recent logs for one PM2 process” |
+| `docker_list` | `docker.ps` | “What is the state of the Docker containers?” |
+| `docker_logs` | `docker.logs` | “Show recent logs for one container” |
+| `journal_logs` | `journal.logs` | “Show recent journal logs for one systemd service” |
+| `git_status` | `git.status` | “What is the working-tree and branch status of a repository?” |
+| `git_current_commit` | `git.current_commit` | “Which commit is checked out?” |
+| `git_branch` | `git.branch` | “Which branch is checked out?” |
+
+Safety properties:
+
+- The `lines` argument of every log tool is bounded to 1–1000 (default 100) in the MCP schema, mirroring the agent-side bounds; no arbitrary flags or shell syntax can reach the agent.
+- `git_status`, `git_current_commit` and `git_branch` relay the `repository` path to the agent's own safe input model (a git work-tree path the agent validates); the MCP layer adds no path handling of its own, so it cannot become an arbitrary-path bypass.
+- None of these tools dispatch a mutating command. `pm2.restart`, `docker.restart`, `systemctl.restart`, `git.pull` and the deploy workflow are deliberately absent from the investigation toolset; only the operator-approved `workflow_deploy` in `operate` mode can mutate state.
+- A missing/unavailable agent capability is surfaced as a machine-readable tool error (`capability_not_found` / `capability_unavailable`) through the existing fail-closed command-creation path; one agent missing a tool never affects calls to other agents.
+
+### Milo examples
+
+- “server-a дээрх PM2 process-уудыг хар” → `pm2_list` (agent_id = server-a)
+- “api process-ийн сүүлийн 100 log хар” → `pm2_logs` (process = api, lines = 100)
+- “Docker container-уудын төлөв хар” → `docker_list`
+- “nginx-ийн сүүлийн journal log хар” → `journal_logs` (service = nginx)
+- “backend repository-ийн git status хар” → `git_status` (repository = /srv/backend)
 
 ### Transport security
 

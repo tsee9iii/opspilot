@@ -24,6 +24,14 @@ const (
 	FileReadTool         = "file.read"
 	FilesystemListTool   = "filesystem.list"
 	DockerInspectTool    = "docker.inspect"
+	PM2ListTool          = "pm2.list"
+	PM2LogsTool          = "pm2.logs"
+	DockerPsTool         = "docker.ps"
+	DockerLogsTool       = "docker.logs"
+	JournalLogsTool      = "journal.logs"
+	GitStatusTool        = "git.status"
+	GitCurrentCommitTool = "git.current_commit"
+	GitBranchTool        = "git.branch"
 )
 
 const (

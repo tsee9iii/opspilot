@@ -39,14 +39,28 @@ var inventoryToolNames = []string{
 	"get_alert",
 }
 
+// investigationToolNames are the read-only remote-investigation tools exposed
+// in the investigate tier. Each dispatches a bounded, read-only agent command;
+// none modifies state.
+var investigationToolNames = []string{
+	"pm2_list",
+	"pm2_logs",
+	"docker_list",
+	"docker_logs",
+	"journal_logs",
+	"git_status",
+	"git_current_commit",
+	"git_branch",
+}
+
 // diagnosticToolNames are the investigate-tier tools that dispatch read-only
 // inspection to agents.
-var diagnosticToolNames = []string{
+var diagnosticToolNames = append([]string{
 	"file_read",
 	"filesystem_list",
 	"docker_inspect",
 	"workflow_diagnose",
-}
+}, investigationToolNames...)
 
 // TestBuildInventoryMode pins the most restrictive tier: pure central reads
 // only, no tools that contact agents or mutate anything.
@@ -121,6 +135,14 @@ func TestBuildToolCategories(t *testing.T) {
 		"file_read":             CategoryInvestigation,
 		"filesystem_list":       CategoryInvestigation,
 		"docker_inspect":        CategoryInvestigation,
+		"pm2_list":              CategoryInvestigation,
+		"pm2_logs":              CategoryInvestigation,
+		"docker_list":           CategoryInvestigation,
+		"docker_logs":           CategoryInvestigation,
+		"journal_logs":          CategoryInvestigation,
+		"git_status":            CategoryInvestigation,
+		"git_current_commit":    CategoryInvestigation,
+		"git_branch":            CategoryInvestigation,
 	}
 	validCategory := map[string]bool{
 		CategoryInventory:     true,
@@ -163,6 +185,72 @@ func TestWorkflowDispatchToolConstants(t *testing.T) {
 		dispatch.FilesystemListTool != "filesystem.list" ||
 		dispatch.DockerInspectTool != "docker.inspect" {
 		t.Fatalf("unexpected wire constants: %q %q %q %q %q", dispatch.WorkflowDiagnoseTool, dispatch.WorkflowDeployTool, dispatch.FileReadTool, dispatch.FilesystemListTool, dispatch.DockerInspectTool)
+	}
+}
+
+// TestInvestigationDispatchToolConstants pins the wire contract between the MCP
+// investigation tools and the registered agent tool names.
+func TestInvestigationDispatchToolConstants(t *testing.T) {
+	want := map[string]string{
+		"pm2_list":           dispatch.PM2ListTool,
+		"pm2_logs":           dispatch.PM2LogsTool,
+		"docker_list":        dispatch.DockerPsTool,
+		"docker_logs":        dispatch.DockerLogsTool,
+		"journal_logs":       dispatch.JournalLogsTool,
+		"git_status":         dispatch.GitStatusTool,
+		"git_current_commit": dispatch.GitCurrentCommitTool,
+		"git_branch":         dispatch.GitBranchTool,
+	}
+	expectedWire := map[string]string{
+		"pm2_list":           "pm2.list",
+		"pm2_logs":           "pm2.logs",
+		"docker_list":        "docker.ps",
+		"docker_logs":        "docker.logs",
+		"journal_logs":       "journal.logs",
+		"git_status":         "git.status",
+		"git_current_commit": "git.current_commit",
+		"git_branch":         "git.branch",
+	}
+	for mcpName, wire := range want {
+		if wire != expectedWire[mcpName] {
+			t.Fatalf("%s dispatches %q, want %q", mcpName, wire, expectedWire[mcpName])
+		}
+	}
+}
+
+// TestBuildExcludesMutatingTools ensures the investigation tools never map to a
+// mutating agent command: no pm2/docker/systemd restart, no git pull, and no
+// deploy workflow among the new investigation tools in any mode.
+func TestBuildExcludesMutatingTools(t *testing.T) {
+	for _, mode := range []string{config.MCPModeInventory, config.MCPModeInvestigate, config.MCPModeOperate} {
+		ts := Build(depsWithMode(mode))
+		seen := toolNames(ts)
+		for _, mutating := range []string{
+			"pm2_restart",
+			"docker_restart",
+			"systemctl_restart",
+			"systemctl_status",
+			"git_pull",
+		} {
+			if seen[mutating] {
+				t.Fatalf("mode %q must not expose mutating tool %s", mode, mutating)
+			}
+			if _, ok := ts.Get(mutating); ok {
+				t.Fatalf("mode %q must not make %s callable", mode, mutating)
+			}
+		}
+	}
+	// The investigation dispatch constants must only reference read-only agent
+	// tools; the mutating agent tool names must never appear among them.
+	for _, wire := range []string{
+		dispatch.PM2ListTool, dispatch.PM2LogsTool, dispatch.DockerPsTool,
+		dispatch.DockerLogsTool, dispatch.JournalLogsTool, dispatch.GitStatusTool,
+		dispatch.GitCurrentCommitTool, dispatch.GitBranchTool,
+	} {
+		switch wire {
+		case "pm2.restart", "docker.restart", "systemctl.restart", "git.pull":
+			t.Fatalf("mutating agent tool %q must not be dispatched by an investigation tool", wire)
+		}
 	}
 }
 

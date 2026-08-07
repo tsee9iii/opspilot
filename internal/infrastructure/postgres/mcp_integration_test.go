@@ -42,11 +42,14 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 	capabilityRepo := NewCapabilityRepository(pool)
 	inventoryRepo := NewInventoryRepository(pool)
 
-	// Execution tools require operator confirmation: register workflow.diagnose,
-	// workflow.deploy, file.read, filesystem.list and docker.inspect as
-	// confirmation-required, available capabilities so created commands stay
-	// pending and the tools return immediately.
-	for _, toolName := range []string{"workflow.diagnose", "workflow.deploy", "file.read", "filesystem.list", "docker.inspect"} {
+	// Execution tools require operator confirmation: register every dispatched
+	// tool as a confirmation-required, available capability so created commands
+	// stay pending and the tools return immediately.
+	for _, toolName := range []string{
+		"workflow.diagnose", "workflow.deploy", "file.read", "filesystem.list",
+		"docker.inspect", "pm2.list", "pm2.logs", "docker.ps", "docker.logs",
+		"journal.logs", "git.status", "git.current_commit", "git.branch",
+	} {
 		if err := capabilityRepo.Upsert(ctx, agent, appcapability.Capability{
 			ToolName: toolName, Version: "1.0.0", Description: "workflow",
 			ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "required",
@@ -326,6 +329,14 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 			"file_read":             {"agent_id": agent.String(), "path": "docker-compose.yml"},
 			"filesystem_list":       {"agent_id": agent.String(), "path": "."},
 			"docker_inspect":        {"agent_id": agent.String(), "container": "merchant-api"},
+			"pm2_list":              {"agent_id": agent.String()},
+			"pm2_logs":              {"agent_id": agent.String(), "process": "api"},
+			"docker_list":           {"agent_id": agent.String()},
+			"docker_logs":           {"agent_id": agent.String(), "container": "merchant-api"},
+			"journal_logs":          {"agent_id": agent.String(), "service": "nginx"},
+			"git_status":            {"agent_id": agent.String(), "repository": "/srv/backend"},
+			"git_current_commit":    {"agent_id": agent.String(), "repository": "/srv/backend"},
+			"git_branch":            {"agent_id": agent.String(), "repository": "/srv/backend"},
 		}
 		for _, tool := range listing.Result.Tools {
 			if tool.OutputSchema.Required == nil {
