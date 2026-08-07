@@ -172,3 +172,113 @@ secret: secret
 		t.Fatal("expected not found")
 	}
 }
+
+func writeAgentConfig(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "agent.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	return path
+}
+
+func TestLoadConfigProductionRequiresHTTPS(t *testing.T) {
+	base := `registration_token: tok
+secret: secret
+server:
+  environment: production
+`
+	t.Run("http central url rejected in production", func(t *testing.T) {
+		path := writeAgentConfig(t, base+"central_url: http://central.example.com\n")
+		_, err := LoadConfig(path)
+		if err == nil || !strings.Contains(err.Error(), "central_url must use https") {
+			t.Fatalf("expected TLS error, got: %v", err)
+		}
+	})
+
+	t.Run("https central url accepted in production", func(t *testing.T) {
+		path := writeAgentConfig(t, base+"central_url: https://central.example.com\n")
+		if _, err := LoadConfig(path); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("non-production allows http", func(t *testing.T) {
+		path := writeAgentConfig(t, "central_url: http://localhost:8080\n")
+		if _, err := LoadConfig(path); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("allow_insecure_central escape hatch", func(t *testing.T) {
+		path := writeAgentConfig(t, base+"central_url: http://central.example.com\nallow_insecure_central: true\n")
+		if _, err := LoadConfig(path); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestLoadConfigSecurityFields(t *testing.T) {
+	path := writeAgentConfig(t, `central_url: https://central.example.com
+registration_token: tok
+secret: secret
+server:
+  environment: production
+allow_insecure_central: false
+filesystem:
+  allow_absolute_paths: true
+http_check:
+  allow_endpoints:
+    - http://127.0.0.1:8080/health
+  allow_hosts:
+    - int.example
+  allow_cidrs:
+    - 10.0.0.0/8
+  allow_private: true
+`)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AllowInsecureCentral {
+		t.Fatal("expected allow_insecure_central false")
+	}
+	if !cfg.Filesystem.AllowAbsolutePaths {
+		t.Fatal("expected filesystem.allow_absolute_paths true")
+	}
+	if len(cfg.HTTPCheck.AllowEndpoints) != 1 || cfg.HTTPCheck.AllowEndpoints[0] != "http://127.0.0.1:8080/health" {
+		t.Fatalf("unexpected http_check allow_endpoints: %+v", cfg.HTTPCheck.AllowEndpoints)
+	}
+	if len(cfg.HTTPCheck.AllowHosts) != 1 || cfg.HTTPCheck.AllowHosts[0] != "int.example" {
+		t.Fatalf("unexpected http_check allow_hosts: %+v", cfg.HTTPCheck.AllowHosts)
+	}
+	if len(cfg.HTTPCheck.AllowCIDRs) != 1 || cfg.HTTPCheck.AllowCIDRs[0] != "10.0.0.0/8" {
+		t.Fatalf("unexpected http_check allow_cidrs: %+v", cfg.HTTPCheck.AllowCIDRs)
+	}
+	if !cfg.HTTPCheck.AllowPrivate {
+		t.Fatal("expected http_check allow_private true")
+	}
+}
+
+func TestLoadConfigSecurityFieldsDefaults(t *testing.T) {
+	path := writeAgentConfig(t, `central_url: http://localhost:8080
+registration_token: tok
+secret: secret
+`)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.AllowInsecureCentral {
+		t.Fatal("expected allow_insecure_central to default to false")
+	}
+	if cfg.Filesystem.AllowAbsolutePaths {
+		t.Fatal("expected filesystem.allow_absolute_paths to default to false")
+	}
+	if cfg.HTTPCheck.AllowPrivate {
+		t.Fatal("expected http_check allow_private to default to false")
+	}
+	if len(cfg.HTTPCheck.AllowEndpoints) != 0 || len(cfg.HTTPCheck.AllowHosts) != 0 || len(cfg.HTTPCheck.AllowCIDRs) != 0 {
+		t.Fatalf("expected empty http_check allowlists, got %+v", cfg.HTTPCheck)
+	}
+}

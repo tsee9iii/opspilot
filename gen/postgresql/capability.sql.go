@@ -12,7 +12,7 @@ import (
 )
 
 const getCapabilityByAgentTool = `-- name: GetCapabilityByAgentTool :one
-SELECT confirmation_level
+SELECT confirmation_level, available
 FROM capabilities
 WHERE agent_id = $1
   AND tool_name = $2
@@ -23,13 +23,20 @@ type GetCapabilityByAgentToolParams struct {
 	ToolName string
 }
 
-// Resolve a tool's confirmation level for an agent. Used at command creation
-// to decide whether the command requires operator confirmation.
-func (q *Queries) GetCapabilityByAgentTool(ctx context.Context, arg GetCapabilityByAgentToolParams) (string, error) {
+type GetCapabilityByAgentToolRow struct {
+	ConfirmationLevel string
+	Available         bool
+}
+
+// Resolve a tool capability for an agent. Used at command creation to decide
+// whether the command may run and whether it requires operator confirmation.
+// Fails closed: a caller must treat pgx.ErrNoRows as "agent has not
+// advertised this tool".
+func (q *Queries) GetCapabilityByAgentTool(ctx context.Context, arg GetCapabilityByAgentToolParams) (GetCapabilityByAgentToolRow, error) {
 	row := q.db.QueryRow(ctx, getCapabilityByAgentTool, arg.AgentID, arg.ToolName)
-	var confirmation_level string
-	err := row.Scan(&confirmation_level)
-	return confirmation_level, err
+	var i GetCapabilityByAgentToolRow
+	err := row.Scan(&i.ConfirmationLevel, &i.Available)
+	return i, err
 }
 
 const upsertCapability = `-- name: UpsertCapability :exec

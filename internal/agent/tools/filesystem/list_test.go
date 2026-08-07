@@ -30,6 +30,13 @@ func newTestLoader(t *testing.T, root string) *project.Loader {
 	return loader
 }
 
+// listTool builds a tool with absolute paths allowed. Existing tests exercise
+// listing behaviour against absolute temp directories; the default-deny of
+// absolute paths is covered separately by TestFilesystemListAbsolutePathDenied.
+func listTool(loader *project.Loader) *FilesystemListTool {
+	return NewFilesystemListToolWithPolicy(loader, true)
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -73,7 +80,7 @@ func entryNames(entries []listEntry) []string {
 }
 
 func TestFilesystemListToolMetadata(t *testing.T) {
-	tool := NewFilesystemListTool(nil)
+	tool := listTool(nil)
 	if tool.Name() != ToolFilesystemList {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
@@ -93,7 +100,7 @@ func TestFilesystemListToolMetadata(t *testing.T) {
 }
 
 func TestFilesystemListParameterSchema(t *testing.T) {
-	tool := NewFilesystemListTool(nil)
+	tool := listTool(nil)
 	var schema struct {
 		Type                 string   `json:"type"`
 		Required             []string `json:"required"`
@@ -119,7 +126,7 @@ func TestFilesystemListParameterSchema(t *testing.T) {
 }
 
 func TestFilesystemListEmptyDirectory(t *testing.T) {
-	res, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+t.TempDir()+`"}`)
+	res, err := executeList(t, listTool(nil), `{"path":"`+t.TempDir()+`"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -142,7 +149,7 @@ func TestFilesystemListMixedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+root+`"}`)
+	res, err := executeList(t, listTool(nil), `{"path":"`+root+`"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -189,7 +196,7 @@ func TestFilesystemListHiddenFiles(t *testing.T) {
 	writeFile(t, filepath.Join(root, ".env"), "SECRET=1")
 	writeFile(t, filepath.Join(root, "app.conf"), "x")
 
-	res, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+root+`"}`)
+	res, err := executeList(t, listTool(nil), `{"path":"`+root+`"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -210,7 +217,7 @@ func TestFilesystemListSymlinkNotFollowed(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(root, "keep.txt"), "keep")
 
-	res, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+root+`"}`)
+	res, err := executeList(t, listTool(nil), `{"path":"`+root+`"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -232,7 +239,7 @@ func TestFilesystemListRecursive(t *testing.T) {
 	writeFile(t, filepath.Join(root, "logs", "nginx", "default.conf"), "x")
 
 	t.Run("default is not recursive", func(t *testing.T) {
-		res, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+root+`"}`)
+		res, err := executeList(t, listTool(nil), `{"path":"`+root+`"}`)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -242,7 +249,7 @@ func TestFilesystemListRecursive(t *testing.T) {
 	})
 
 	t.Run("recursive with default depth 1 lists only the top directory", func(t *testing.T) {
-		res, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+root+`","recursive":true}`)
+		res, err := executeList(t, listTool(nil), `{"path":"`+root+`","recursive":true}`)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -252,7 +259,7 @@ func TestFilesystemListRecursive(t *testing.T) {
 	})
 
 	t.Run("depth 2 includes immediate subdirectories", func(t *testing.T) {
-		res, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+root+`","recursive":true,"max_depth":2}`)
+		res, err := executeList(t, listTool(nil), `{"path":"`+root+`","recursive":true,"max_depth":2}`)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -262,7 +269,7 @@ func TestFilesystemListRecursive(t *testing.T) {
 	})
 
 	t.Run("depth 3 includes nested directories", func(t *testing.T) {
-		res, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+root+`","recursive":true,"max_depth":3}`)
+		res, err := executeList(t, listTool(nil), `{"path":"`+root+`","recursive":true,"max_depth":3}`)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -280,7 +287,7 @@ func TestFilesystemListDepthClamped(t *testing.T) {
 	}
 	writeFile(t, filepath.Join(root, "d1", "d2", "d3", "d4", "d5", "deep.txt"), "x")
 
-	res, err := executeList(t, NewFilesystemListTool(nil),
+	res, err := executeList(t, listTool(nil),
 		`{"path":"`+root+`","recursive":true,"max_depth":99}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -306,7 +313,7 @@ func TestFilesystemListRelativePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewFilesystemListTool(newTestLoader(t, root))
+	tool := listTool(newTestLoader(t, root))
 	res, err := executeList(t, tool, `{"path":"logs"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -322,7 +329,7 @@ func TestFilesystemListRelativePath(t *testing.T) {
 
 func TestFilesystemListTraversalAttack(t *testing.T) {
 	root := t.TempDir()
-	tool := NewFilesystemListTool(newTestLoader(t, root))
+	tool := listTool(newTestLoader(t, root))
 	for _, p := range []string{"../secret", "sub/../../outside"} {
 		t.Run(p, func(t *testing.T) {
 			_, err := executeList(t, tool, `{"path":"`+p+`"}`)
@@ -338,7 +345,7 @@ func TestFilesystemListSymlinkEscape(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tool := NewFilesystemListTool(newTestLoader(t, root))
+	tool := listTool(newTestLoader(t, root))
 	_, err := executeList(t, tool, `{"path":"esc"}`)
 	assertToolError(t, err, "invalid_path")
 }
@@ -349,7 +356,7 @@ func TestFilesystemListDirectoryTooLarge(t *testing.T) {
 		writeFile(t, filepath.Join(root, fmt.Sprintf("f%04d", i)), "x")
 	}
 
-	_, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+root+`"}`)
+	_, err := executeList(t, listTool(nil), `{"path":"`+root+`"}`)
 	assertToolError(t, err, "directory_too_large")
 }
 
@@ -364,7 +371,7 @@ func TestFilesystemListPermissionDenied(t *testing.T) {
 	}
 	defer os.Chmod(root, 0o755)
 
-	_, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+root+`"}`)
+	_, err := executeList(t, listTool(nil), `{"path":"`+root+`"}`)
 	assertToolError(t, err, "permission_denied")
 }
 
@@ -372,29 +379,54 @@ func TestFilesystemListNotADirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.conf")
 	writeFile(t, path, "x")
 
-	_, err := executeList(t, NewFilesystemListTool(nil), `{"path":"`+path+`"}`)
+	_, err := executeList(t, listTool(nil), `{"path":"`+path+`"}`)
 	assertToolError(t, err, "not_a_directory")
 }
 
 func TestFilesystemListMissingDirectory(t *testing.T) {
-	_, err := executeList(t, NewFilesystemListTool(nil), `{"path":"/nonexistent/missing"}`)
+	_, err := executeList(t, listTool(nil), `{"path":"/nonexistent/missing"}`)
 	assertToolError(t, err, "directory_not_found")
 }
 
 func TestFilesystemListInvalidPath(t *testing.T) {
 	t.Run("no project root for relative path", func(t *testing.T) {
-		_, err := executeList(t, NewFilesystemListTool(nil), `{"path":"logs"}`)
+		_, err := executeList(t, listTool(nil), `{"path":"logs"}`)
 		assertToolError(t, err, "invalid_path")
 	})
 
 	t.Run("empty path", func(t *testing.T) {
-		_, err := executeList(t, NewFilesystemListTool(nil), `{"path":""}`)
+		_, err := executeList(t, listTool(nil), `{"path":""}`)
 		assertToolError(t, err, "invalid_path")
 	})
 }
 
-func TestFilesystemListParseErrors(t *testing.T) {
+func TestFilesystemListAbsolutePathDenied(t *testing.T) {
+	root := t.TempDir()
 	tool := NewFilesystemListTool(nil)
+	_, err := executeList(t, tool, `{"path":"`+root+`"}`)
+	assertToolError(t, err, "invalid_path")
+
+	if _, err := executeList(t, tool, `{"path":"/etc"}`); err == nil {
+		t.Fatal("expected /etc to be denied by default")
+	}
+}
+
+func TestFilesystemListAbsolutePathOptIn(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "app.conf"), "x")
+
+	tool := NewFilesystemListToolWithPolicy(nil, true)
+	res, err := executeList(t, tool, `{"path":"`+root+`"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.Entries) != 1 || res.Entries[0].Name != "app.conf" {
+		t.Fatalf("unexpected entries: %+v", res.Entries)
+	}
+}
+
+func TestFilesystemListParseErrors(t *testing.T) {
+	tool := listTool(nil)
 	for _, c := range []string{``, `not json`, `{}`} {
 		if _, err := tool.Execute(context.Background(), []byte(c)); err == nil {
 			t.Fatalf("expected error for payload: %q", c)
@@ -407,7 +439,7 @@ func TestFilesystemListRegisteredTool(t *testing.T) {
 	writeFile(t, filepath.Join(root, "app.conf"), "x")
 
 	registry := agent.NewRegistry()
-	if err := registry.Register(NewFilesystemListTool(newTestLoader(t, root))); err != nil {
+	if err := registry.Register(listTool(newTestLoader(t, root))); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
@@ -431,7 +463,7 @@ func TestFilesystemListRegisteredTool(t *testing.T) {
 
 func TestFilesystemListRegistryPayloadValidation(t *testing.T) {
 	registry := agent.NewRegistry()
-	if err := registry.Register(NewFilesystemListTool(nil)); err != nil {
+	if err := registry.Register(listTool(nil)); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})

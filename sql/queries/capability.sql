@@ -22,9 +22,11 @@ DO UPDATE SET version = EXCLUDED.version,
               updated_at = now();
 
 -- name: GetCapabilityByAgentTool :one
--- Resolve a tool's confirmation level for an agent. Used at command creation
--- to decide whether the command requires operator confirmation.
-SELECT confirmation_level
+-- Resolve a tool capability for an agent. Used at command creation to decide
+-- whether the command may run and whether it requires operator confirmation.
+-- Fails closed: a caller must treat pgx.ErrNoRows as "agent has not
+-- advertised this tool".
+SELECT confirmation_level, available
 FROM capabilities
 WHERE agent_id = sqlc.arg('agent_id')
   AND tool_name = sqlc.arg('tool_name');

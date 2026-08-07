@@ -73,9 +73,14 @@ func main() {
 		git.NewGitCurrentCommitTool(),
 		git.NewGitBranchTool(),
 		git.NewGitPullTool(),
-		httptool.NewHTTPCheckTool(),
-		filetool.NewFileReadTool(agentCfg.Profiles()),
-		filesystem.NewFilesystemListTool(agentCfg.Profiles()),
+		httptool.NewHTTPCheckToolWithPolicy(httptool.Policy{
+			AllowedEndpoints: agentCfg.HTTPCheck.AllowEndpoints,
+			AllowedHosts:     agentCfg.HTTPCheck.AllowHosts,
+			AllowedCIDRs:     agentCfg.HTTPCheck.AllowCIDRs,
+			AllowPrivate:     agentCfg.HTTPCheck.AllowPrivate,
+		}),
+		filetool.NewFileReadToolWithPolicy(agentCfg.Profiles(), agentCfg.Filesystem.AllowAbsolutePaths),
+		filesystem.NewFilesystemListToolWithPolicy(agentCfg.Profiles(), agentCfg.Filesystem.AllowAbsolutePaths),
 	} {
 		if err := registry.Register(tool); err != nil {
 			log.Fatalf("agent: register tool: %v", err)

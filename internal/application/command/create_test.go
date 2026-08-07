@@ -51,7 +51,7 @@ func TestCreatePendingForRequiredTool(t *testing.T) {
 	}
 }
 
-func TestCreateDefaultsApprovedWithoutCapability(t *testing.T) {
+func TestCreateRejectsUnknownCapability(t *testing.T) {
 	agentID := uuid.New()
 	repo := &fakeRepo{}
 	uc := NewCreateUseCase(repo, &fakeResolver{level: func(uuid.UUID, string) (string, error) {
@@ -61,11 +61,47 @@ func TestCreateDefaultsApprovedWithoutCapability(t *testing.T) {
 	_, err := uc.Create(context.Background(), CreateCommandRequest{
 		AgentID: agentID.String(), Tool: "noop", Payload: []byte(`{}`),
 	})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if !errors.Is(err, ErrCapabilityNotFound) {
+		t.Fatalf("expected ErrCapabilityNotFound, got: %v", err)
 	}
-	if repo.created[0].ConfirmationStatus != ConfirmationApproved {
-		t.Fatalf("expected approved, got %q", repo.created[0].ConfirmationStatus)
+	if len(repo.created) != 0 {
+		t.Fatalf("no command may be persisted for an unknown tool, got %d", len(repo.created))
+	}
+}
+
+func TestCreatePropagatesCapabilityNotFound(t *testing.T) {
+	agentID := uuid.New()
+	repo := &fakeRepo{}
+	uc := NewCreateUseCase(repo, &fakeResolver{level: func(uuid.UUID, string) (string, error) {
+		return "", ErrCapabilityNotFound
+	}})
+
+	_, err := uc.Create(context.Background(), CreateCommandRequest{
+		AgentID: agentID.String(), Tool: "unknown.tool", Payload: []byte(`{}`),
+	})
+	if !errors.Is(err, ErrCapabilityNotFound) {
+		t.Fatalf("expected ErrCapabilityNotFound, got: %v", err)
+	}
+	if len(repo.created) != 0 {
+		t.Fatalf("no command may be persisted for an unknown tool, got %d", len(repo.created))
+	}
+}
+
+func TestCreateRejectsUnavailableCapability(t *testing.T) {
+	agentID := uuid.New()
+	repo := &fakeRepo{}
+	uc := NewCreateUseCase(repo, &fakeResolver{level: func(uuid.UUID, string) (string, error) {
+		return "", ErrCapabilityUnavailable
+	}})
+
+	_, err := uc.Create(context.Background(), CreateCommandRequest{
+		AgentID: agentID.String(), Tool: "pm2.restart", Payload: []byte(`{}`),
+	})
+	if !errors.Is(err, ErrCapabilityUnavailable) {
+		t.Fatalf("expected ErrCapabilityUnavailable, got: %v", err)
+	}
+	if len(repo.created) != 0 {
+		t.Fatalf("no command may be persisted for an unavailable tool, got %d", len(repo.created))
 	}
 }
 

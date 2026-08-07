@@ -14,23 +14,40 @@ import (
 	"github.com/tsee9iii/opspilot/internal/agent/project"
 )
 
-// Resolver maps tool input paths to absolute targets. Absolute paths are used
-// directly; relative paths resolve against the first configured project root,
-// whose symlinks are canonicalized so containment is compared resolved to
-// resolved. Escaping the root (via ".." or a symlink) is rejected.
+// Resolver maps tool input paths to absolute targets. By default absolute
+// paths are rejected (fail closed): tool callers are restricted to paths under
+// the configured project roots, resolved against the first project root, whose
+// symlinks are canonicalized so containment is compared resolved to resolved.
+// Escaping the root (via ".." or a symlink) is rejected. Absolute paths are
+// only honoured when AllowAbsolutePaths was explicitly enabled by the agent
+// operator.
 type Resolver struct {
-	loader *project.Loader
+	loader             *project.Loader
+	allowAbsolutePaths bool
 }
 
+// NewResolver builds a Resolver that rejects absolute paths.
 func NewResolver(loader *project.Loader) *Resolver {
 	return &Resolver{loader: loader}
 }
 
+// NewResolverWithPolicy builds a Resolver with an explicit absolute-path
+// policy. allowAbsolutePaths defaults to deny; enable only when the agent
+// operator trusts every tool caller (e.g. the Hermes integration is not
+// reachable by untrusted parties).
+func NewResolverWithPolicy(loader *project.Loader, allowAbsolutePaths bool) *Resolver {
+	return &Resolver{loader: loader, allowAbsolutePaths: allowAbsolutePaths}
+}
+
 // Resolve returns the absolute target for p and the canonical project root
-// (empty when p is absolute). It returns a structured ToolError when a
-// relative path has no project root to resolve against or escapes it.
+// (empty when p is absolute and absolute paths are enabled). It returns a
+// structured ToolError when p is absolute (and not enabled), when a relative
+// path has no project root to resolve against, or when it escapes the root.
 func (r *Resolver) Resolve(p string) (target, root string, err error) {
 	if filepath.IsAbs(p) {
+		if !r.allowAbsolutePaths {
+			return "", "", AbsolutePathDeniedError(p)
+		}
 		return filepath.Clean(p), "", nil
 	}
 	root, err = r.canonicalRoot()
@@ -87,7 +104,18 @@ func NoProjectRootError() error {
 	return &agent.ToolError{
 		Code:       "invalid_path",
 		Message:    "relative paths require a configured project root",
-		Suggestion: "Add a project with an absolute path to the agent config, or pass an absolute path.",
+		Suggestion: "Add a project with an absolute path to the agent config.",
+	}
+}
+
+// AbsolutePathDeniedError is returned when a caller passes an absolute path
+// but absolute paths are not enabled in the agent configuration. This is the
+// default and intended fail-closed behaviour for Hermes-facing file tools.
+func AbsolutePathDeniedError(p string) error {
+	return &agent.ToolError{
+		Code:       "invalid_path",
+		Message:    fmt.Sprintf("absolute path denied: %s", p),
+		Suggestion: "Use a path relative to a configured project root, or enable allow_absolute_paths only if you trust every tool caller.",
 	}
 }
 

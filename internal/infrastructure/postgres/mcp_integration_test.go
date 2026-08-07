@@ -41,12 +41,13 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 
 	// Execution tools require operator confirmation: register workflow.diagnose,
 	// workflow.deploy, file.read, filesystem.list and docker.inspect as
-	// confirmation-required capabilities so created commands stay pending and
-	// the tools return immediately.
+	// confirmation-required, available capabilities so created commands stay
+	// pending and the tools return immediately.
 	for _, toolName := range []string{"workflow.diagnose", "workflow.deploy", "file.read", "filesystem.list", "docker.inspect"} {
 		if err := capabilityRepo.Upsert(ctx, agent, appcapability.Capability{
 			ToolName: toolName, Version: "1.0.0", Description: "workflow",
 			ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "required",
+			Available: true,
 		}); err != nil {
 			t.Fatalf("register capability: %v", err)
 		}
@@ -63,6 +64,9 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		GetCommand: getUC,
 		Dispatch:   dispatchUC,
 		Pinger:     pool,
+		// The default (read-only) toolset omits the execution tools; this test
+		// opts in so the approval-before-execution flow can be exercised.
+		ReadOnly: false,
 	})
 
 	call := func(name string, args map[string]any) callOutput {

@@ -2,6 +2,14 @@
 // that exposes the platform's application use cases as stable MCP tools over
 // stdio. It is an adapter only — it contains no business logic and never calls
 // the Central REST API.
+//
+// # Least-privilege database role
+//
+// This process connects to PostgreSQL directly. The MCP must run with a
+// read-only (or minimally-scoped) database role that can SELECT from the
+// platform tables and INSERT into commands for read-only dispatches, but must
+// NOT be a superuser or own the schema. Never point the MCP at a role that can
+// mutate platform metadata or drop data.
 package main
 
 import (
@@ -32,6 +40,9 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("mcp: %v", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("mcp: config validation: %v", err)
 	}
 
 	zl, err := logger.New(cfg.Logger.Level, cfg.Env == "production")
@@ -71,6 +82,10 @@ func main() {
 		Dispatch:              dispatchUC,
 		Pinger:                pool,
 		DefaultTimeoutSeconds: cfg.MCP.ExecutionTimeoutSeconds,
+		// Read-only mode (default) strips the execution tools (workflow_deploy,
+		// workflow_diagnose) from the tool set so Hermes cannot dispatch remote
+		// execution through the MCP process. It is the safe default.
+		ReadOnly: cfg.MCP.ReadOnly,
 	})
 
 	server := mcp.NewServer(toolSet, os.Stdin, os.Stdout)

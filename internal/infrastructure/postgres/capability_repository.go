@@ -10,6 +10,7 @@ import (
 
 	"github.com/tsee9iii/opspilot/gen/postgresql"
 	appcapability "github.com/tsee9iii/opspilot/internal/application/capability"
+	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 )
 
 var _ appcapability.CapabilityRepository = (*CapabilityRepository)(nil)
@@ -35,19 +36,24 @@ func (r *CapabilityRepository) Upsert(ctx context.Context, agentID uuid.UUID, ca
 	})
 }
 
-// ConfirmationLevel resolves a tool's confirmation level for an agent. A
-// missing capability returns an empty level (command creation then defaults
-// to approved).
+// ConfirmationLevel resolves a tool's confirmation level for an agent. It
+// fails closed: a missing capability returns ErrCapabilityNotFound (never an
+// empty level) and an advertised-but-unavailable tool returns
+// ErrCapabilityUnavailable. Command creation must not proceed without a
+// known, available capability.
 func (r *CapabilityRepository) ConfirmationLevel(ctx context.Context, agentID uuid.UUID, toolName string) (string, error) {
-	level, err := r.q.GetCapabilityByAgentTool(ctx, postgresql.GetCapabilityByAgentToolParams{
+	row, err := r.q.GetCapabilityByAgentTool(ctx, postgresql.GetCapabilityByAgentToolParams{
 		AgentID:  agentID,
 		ToolName: toolName,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", nil
+		return "", appcommand.ErrCapabilityNotFound
 	}
 	if err != nil {
 		return "", err
 	}
-	return level, nil
+	if !row.Available {
+		return "", appcommand.ErrCapabilityUnavailable
+	}
+	return row.ConfirmationLevel, nil
 }

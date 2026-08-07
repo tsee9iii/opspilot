@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -23,7 +24,9 @@ func clearEnv(t *testing.T) {
 		"OPSPILOT_DB_SSLMODE",
 		"OPSPILOT_LOG_LEVEL",
 		"OPSPILOT_AUTH_SERVER_SECRET",
+		"OPSPILOT_OPERATOR_TOKEN",
 		"OPSPILOT_MCP_EXECUTION_TIMEOUT_SECONDS",
+		"OPSPILOT_MCP_READ_ONLY",
 	} {
 		t.Setenv(k, "")
 	}
@@ -299,5 +302,127 @@ server:
 func TestConfigPathDefault(t *testing.T) {
 	if got := configPath(); got != "/etc/opspilot/central.yaml" {
 		t.Fatalf("expected default config path, got %q", got)
+	}
+}
+
+// prodConfig returns a config with production env and every production
+// requirement satisfied.
+func prodConfig() *Config {
+	cfg := defaults()
+	cfg.Env = "production"
+	cfg.Auth.ServerSecret = "prod-server-secret"
+	cfg.Auth.OperatorToken = "prod-operator-token"
+	cfg.Database.Password = "prod-db-password"
+	cfg.Database.SSLMode = "verify-full"
+	cfg.HTTP.Host = "127.0.0.1"
+	return cfg
+}
+
+func TestValidateDevelopmentDefaultsPass(t *testing.T) {
+	cfg := defaults()
+	if cfg.Env != "development" {
+		t.Fatalf("unexpected env: %q", cfg.Env)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("development defaults must validate: %v", err)
+	}
+	if !cfg.MCP.ReadOnly {
+		t.Fatal("MCP read-only must default to true")
+	}
+}
+
+func TestValidateNilFails(t *testing.T) {
+	var cfg *Config
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected nil config to fail validation")
+	}
+}
+
+func TestValidateProductionAcceptsCompleteConfig(t *testing.T) {
+	if err := prodConfig().Validate(); err != nil {
+		t.Fatalf("complete production config must validate: %v", err)
+	}
+}
+
+func TestValidateProductionRejectsDevDefaults(t *testing.T) {
+	cfg := defaults()
+	cfg.Env = "production"
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected production validation to fail with dev defaults")
+	}
+	// Every known-bad value must be reported, and messages must never leak
+	// secret values.
+	msg := err.Error()
+	for _, want := range []string{
+		"OPSPILOT_AUTH_SERVER_SECRET",
+		"OPSPILOT_OPERATOR_TOKEN",
+		"OPSPILOT_DB_PASSWORD",
+		"OPSPILOT_DB_SSLMODE",
+		"OPSPILOT_HTTP_HOST",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("validation must mention %q, got: %s", want, msg)
+		}
+	}
+	for _, leaked := range []string{DevServerSecret, DevOperatorToken, DevDBPassword} {
+		if strings.Contains(msg, leaked) {
+			t.Fatalf("validation must not leak secret values, found %q", leaked)
+		}
+	}
+}
+
+func TestValidateProductionRejectsMissingSecrets(t *testing.T) {
+	base := prodConfig()
+
+	cases := []struct {
+		name string
+		mut  func(*Config)
+		want string
+	}{
+		{"empty server secret", func(c *Config) { c.Auth.ServerSecret = "" }, "OPSPILOT_AUTH_SERVER_SECRET"},
+		{"default server secret", func(c *Config) { c.Auth.ServerSecret = DevServerSecret }, "OPSPILOT_AUTH_SERVER_SECRET"},
+		{"empty operator token", func(c *Config) { c.Auth.OperatorToken = "" }, "OPSPILOT_OPERATOR_TOKEN"},
+		{"default operator token", func(c *Config) { c.Auth.OperatorToken = DevOperatorToken }, "OPSPILOT_OPERATOR_TOKEN"},
+		{"empty db password", func(c *Config) { c.Database.Password = "" }, "OPSPILOT_DB_PASSWORD"},
+		{"default db password", func(c *Config) { c.Database.Password = DevDBPassword }, "OPSPILOT_DB_PASSWORD"},
+		{"sslmode disable", func(c *Config) { c.Database.SSLMode = "disable" }, "OPSPILOT_DB_SSLMODE"},
+		{"sslmode empty", func(c *Config) { c.Database.SSLMode = "" }, "OPSPILOT_DB_SSLMODE"},
+		{"bind all interfaces", func(c *Config) { c.HTTP.Host = "0.0.0.0" }, "OPSPILOT_HTTP_HOST"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := base
+			tc.mut(cfg)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("expected validation error for %q", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected error to mention %q, got: %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestValidateDevelopmentIgnoresDefaults(t *testing.T) {
+	cfg := defaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("development defaults must validate even with known dev credentials: %v", err)
+	}
+}
+
+func TestLoadMCPReadOnlyFromEnv(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OPSPILOT_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
+	t.Setenv("OPSPILOT_MCP_READ_ONLY", "false")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MCP.ReadOnly {
+		t.Fatal("expected OPSPILOT_MCP_READ_ONLY=false to disable read-only mode")
 	}
 }

@@ -32,7 +32,7 @@ const toolListParameterSchema = `{
   "properties": {
     "path": {
       "type": "string",
-      "description": "Absolute path, or a path relative to the first configured project root"
+      "description": "Path relative to the first configured project root (absolute paths are denied by default)"
     },
     "recursive": {
       "type": "boolean",
@@ -70,13 +70,22 @@ type listResult struct {
 // file contents. Relative paths resolve against the first configured project
 // root; paths that escape it (via ".." or a symlink) are rejected, as are
 // special files, directories with more than 1000 entries, and listings larger
-// than 5000 entries. Symlinks are reported but never followed.
+// than 5000 entries. Symlinks are reported but never followed. Absolute paths
+// are denied by default and only honoured when the agent operator enabled
+// allow_absolute_paths.
 type FilesystemListTool struct {
 	resolver *fsutil.Resolver
 }
 
+// NewFilesystemListTool builds a tool that denies absolute paths.
 func NewFilesystemListTool(loader *project.Loader) *FilesystemListTool {
 	return &FilesystemListTool{resolver: fsutil.NewResolver(loader)}
+}
+
+// NewFilesystemListToolWithPolicy builds a filesystem.list tool with an
+// explicit absolute-path policy (default deny).
+func NewFilesystemListToolWithPolicy(loader *project.Loader, allowAbsolutePaths bool) *FilesystemListTool {
+	return &FilesystemListTool{resolver: fsutil.NewResolverWithPolicy(loader, allowAbsolutePaths)}
 }
 
 func (t *FilesystemListTool) Name() string {

@@ -77,11 +77,16 @@ func (h *CommandHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Payload: reqDTO.Payload,
 	})
 	if err != nil {
-		if errors.Is(err, command.ErrInvalidAgentID) {
+		switch {
+		case errors.Is(err, command.ErrInvalidAgentID):
 			writeError(w, http.StatusBadRequest, "validation_error", err.Error())
-			return
+		case errors.Is(err, command.ErrCapabilityNotFound):
+			writeError(w, http.StatusBadRequest, "capability_not_found", "agent has not advertised this tool")
+		case errors.Is(err, command.ErrCapabilityUnavailable):
+			writeError(w, http.StatusConflict, "capability_unavailable", "tool is not currently available on the agent")
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error", "failed to create command")
 		}
-		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create command")
 		return
 	}
 

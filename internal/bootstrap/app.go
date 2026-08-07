@@ -41,6 +41,9 @@ func New(ctx context.Context) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap: load config: %w", err)
 	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("bootstrap: config validation: %w", err)
+	}
 
 	log, err := logger.New(cfg.Logger.Level, cfg.Env == "production")
 	if err != nil {

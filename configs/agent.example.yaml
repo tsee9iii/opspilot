@@ -17,6 +17,30 @@ execution_policy:
   denied_commands: []
   working_directory: ""
 
+# allow_insecure_central permits an http:// central_url when the agent reports
+# a production environment. Keep it false in production: the agent must talk to
+# central over TLS so tokens are never sent in the clear. Set it to true only
+# for local development behind a TLS-terminating proxy.
+allow_insecure_central: false
+
+# filesystem controls the read-only file tools (file.read, filesystem.list).
+# By default they only accept paths relative to a configured project root and
+# absolute paths are denied (fail closed). Enable allow_absolute_paths ONLY if
+# every tool caller is trusted; the Hermes integration must not be reachable by
+# untrusted parties.
+filesystem:
+  allow_absolute_paths: false
+
+# http_check restricts where the http.check tool may connect. Restricted ranges
+# (loopback, link-local incl. cloud metadata, RFC1918 private, CGNAT) are
+# denied by default. Configuring any allowlist restricts the tool to exactly
+# those destinations; allow_private opts back into private ranges.
+http_check:
+  allow_endpoints: []
+  allow_hosts: []
+  allow_cidrs: []
+  allow_private: false
+
 # Optional project profiles (configuration and discovery only — no tool is
 # executed from here). Each project needs a unique name and an absolute path.
 # A project deploys either with a legacy "restart"/"logs" tool pair (git.pull

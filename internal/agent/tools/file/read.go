@@ -29,7 +29,7 @@ const toolReadParameterSchema = `{
   "properties": {
     "path": {
       "type": "string",
-      "description": "Absolute path, or a path relative to the first configured project root"
+      "description": "Path relative to the first configured project root (absolute paths are denied by default)"
     }
   },
   "additionalProperties": false
@@ -50,13 +50,21 @@ type fileReadResult struct {
 // It is strictly read-only and never executes anything. Relative paths resolve
 // against the first configured project root; paths that escape it (via ".."
 // or a symlink) are rejected, as are directories, special files, files larger
-// than 1 MB, and binary files.
+// than 1 MB, and binary files. Absolute paths are denied by default and only
+// honoured when the agent operator enabled allow_absolute_paths.
 type FileReadTool struct {
 	resolver *fsutil.Resolver
 }
 
+// NewFileReadTool builds a tool that denies absolute paths.
 func NewFileReadTool(loader *project.Loader) *FileReadTool {
 	return &FileReadTool{resolver: fsutil.NewResolver(loader)}
+}
+
+// NewFileReadToolWithPolicy builds a file.read tool with an explicit
+// absolute-path policy (default deny).
+func NewFileReadToolWithPolicy(loader *project.Loader, allowAbsolutePaths bool) *FileReadTool {
+	return &FileReadTool{resolver: fsutil.NewResolverWithPolicy(loader, allowAbsolutePaths)}
 }
 
 func (t *FileReadTool) Name() string {

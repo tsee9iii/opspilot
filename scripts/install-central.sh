@@ -22,7 +22,7 @@ readonly SERVICE_PATH="/etc/systemd/system/opspilot-central.service"
 readonly CONFIG_DIR="/etc/opspilot"
 readonly CONFIG_PATH="/etc/opspilot/central.yaml"
 readonly SERVICE_NAME="opspilot-central"
-readonly HEALTH_URL="http://127.0.0.1:8080/health"
+readonly HEALTH_URL="http://127.0.0.1:8080/healthz"
 
 log() { printf '[installer] %s\n' "$*"; }
 die() { printf '[installer] error: %s\n' "$*" >&2; exit 1; }
@@ -115,6 +115,15 @@ RestartSec=5
 User=opspilot
 Group=opspilot
 WorkingDirectory=${CONFIG_DIR}
+# Hardening: no privilege escalation, private /tmp, and read-only /home so a
+# compromised central process cannot read user secrets or escape via /tmp.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+# Lock the service into the filesystem capabilities it needs: execute, read
+# the config, and write logs. It never needs to create or modify system files.
+ProtectSystem=strict
+ReadWritePaths=${CONFIG_DIR}
 
 [Install]
 WantedBy=multi-user.target

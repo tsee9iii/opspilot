@@ -30,6 +30,13 @@ func newTestLoader(t *testing.T, root string) *project.Loader {
 	return loader
 }
 
+// readTool builds a tool with absolute paths allowed. Existing tests read from
+// absolute temp directories; the default-deny of absolute paths is covered
+// separately by TestFileReadAbsolutePathDenied.
+func readTool(loader *project.Loader) *FileReadTool {
+	return NewFileReadToolWithPolicy(loader, true)
+}
+
 func writeFile(t *testing.T, path string, data []byte) {
 	t.Helper()
 	if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -65,7 +72,7 @@ func assertToolError(t *testing.T, err error, code string) {
 }
 
 func TestFileReadToolMetadata(t *testing.T) {
-	tool := NewFileReadTool(nil)
+	tool := readTool(nil)
 	if tool.Name() != ToolFileRead {
 		t.Fatalf("unexpected name: %s", tool.Name())
 	}
@@ -85,7 +92,7 @@ func TestFileReadToolMetadata(t *testing.T) {
 }
 
 func TestFileReadParameterSchema(t *testing.T) {
-	tool := NewFileReadTool(nil)
+	tool := readTool(nil)
 	var schema struct {
 		Type                 string   `json:"type"`
 		Required             []string `json:"required"`
@@ -118,7 +125,7 @@ func TestFileReadAbsolutePath(t *testing.T) {
 	content := []byte("worker_processes 4;\n")
 	writeFile(t, path, content)
 
-	res, err := executeRead(t, NewFileReadTool(nil), `{"path":"`+path+`"}`)
+	res, err := executeRead(t, readTool(nil), `{"path":"`+path+`"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -145,7 +152,7 @@ func TestFileReadRelativePath(t *testing.T) {
 	path := filepath.Join(root, "docker-compose.yml")
 	writeFile(t, path, []byte("version: '3'\nservices: {}\n"))
 
-	tool := NewFileReadTool(newTestLoader(t, root))
+	tool := readTool(newTestLoader(t, root))
 	res, err := executeRead(t, tool, `{"path":"docker-compose.yml"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -167,7 +174,7 @@ func TestFileReadPreservesContent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.conf")
 	writeFile(t, path, content)
 
-	res, err := executeRead(t, NewFileReadTool(nil), `{"path":"`+path+`"}`)
+	res, err := executeRead(t, readTool(nil), `{"path":"`+path+`"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,13 +187,13 @@ func TestFileReadPreservesContent(t *testing.T) {
 }
 
 func TestFileReadMissingFile(t *testing.T) {
-	_, err := executeRead(t, NewFileReadTool(nil), `{"path":"/nonexistent/missing.conf"}`)
+	_, err := executeRead(t, readTool(nil), `{"path":"/nonexistent/missing.conf"}`)
 	assertToolError(t, err, "file_not_found")
 }
 
 func TestFileReadDirectory(t *testing.T) {
 	dir := t.TempDir()
-	_, err := executeRead(t, NewFileReadTool(nil), `{"path":"`+dir+`"}`)
+	_, err := executeRead(t, readTool(nil), `{"path":"`+dir+`"}`)
 	assertToolError(t, err, "directory_not_allowed")
 }
 
@@ -194,7 +201,7 @@ func TestFileReadBinaryFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "binary.bin")
 	writeFile(t, path, []byte{0xff, 0xfe, 0x00, 0x01, 0x80})
 
-	_, err := executeRead(t, NewFileReadTool(nil), `{"path":"`+path+`"}`)
+	_, err := executeRead(t, readTool(nil), `{"path":"`+path+`"}`)
 	assertToolError(t, err, "binary_file")
 }
 
@@ -202,7 +209,7 @@ func TestFileReadTooLarge(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "huge.log")
 	writeFile(t, path, make([]byte, toolReadMaxSize+1))
 
-	_, err := executeRead(t, NewFileReadTool(nil), `{"path":"`+path+`"}`)
+	_, err := executeRead(t, readTool(nil), `{"path":"`+path+`"}`)
 	assertToolError(t, err, "file_too_large")
 }
 
@@ -216,13 +223,13 @@ func TestFileReadPermissionDenied(t *testing.T) {
 		t.Fatalf("chmod: %v", err)
 	}
 
-	_, err := executeRead(t, NewFileReadTool(nil), `{"path":"`+path+`"}`)
+	_, err := executeRead(t, readTool(nil), `{"path":"`+path+`"}`)
 	assertToolError(t, err, "permission_denied")
 }
 
 func TestFileReadPathEscape(t *testing.T) {
 	root := t.TempDir()
-	tool := NewFileReadTool(newTestLoader(t, root))
+	tool := readTool(newTestLoader(t, root))
 
 	for _, p := range []string{"../secret", "sub/../../outside.conf", "../.."} {
 		t.Run(p, func(t *testing.T) {
@@ -242,7 +249,7 @@ func TestFileReadSymlinkEscape(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	tool := NewFileReadTool(newTestLoader(t, root))
+	tool := readTool(newTestLoader(t, root))
 	_, err := executeRead(t, tool, `{"path":"escape.conf"}`)
 	assertToolError(t, err, "invalid_path")
 }
@@ -257,7 +264,7 @@ func TestFileReadSymlinkWithinRoot(t *testing.T) {
 		t.Fatalf("symlink: %v", err)
 	}
 
-	tool := NewFileReadTool(newTestLoader(t, root))
+	tool := readTool(newTestLoader(t, root))
 	res, err := executeRead(t, tool, `{"path":"alias.conf"}`)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -268,13 +275,40 @@ func TestFileReadSymlinkWithinRoot(t *testing.T) {
 }
 
 func TestFileReadNoProjectConfigured(t *testing.T) {
-	tool := NewFileReadTool(nil)
+	tool := readTool(nil)
 	_, err := executeRead(t, tool, `{"path":"docker-compose.yml"}`)
 	assertToolError(t, err, "invalid_path")
 }
 
-func TestFileReadParseErrors(t *testing.T) {
+func TestFileReadAbsolutePathDenied(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.conf")
+	writeFile(t, path, []byte("secret\n"))
+
 	tool := NewFileReadTool(nil)
+	_, err := executeRead(t, tool, `{"path":"`+path+`"}`)
+	assertToolError(t, err, "invalid_path")
+
+	if _, err := executeRead(t, tool, `{"path":"/etc/passwd"}`); err == nil {
+		t.Fatal("expected /etc/passwd to be denied by default")
+	}
+}
+
+func TestFileReadAbsolutePathOptIn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.conf")
+	writeFile(t, path, []byte("hello\n"))
+
+	tool := NewFileReadToolWithPolicy(nil, true)
+	res, err := executeRead(t, tool, `{"path":"`+path+`"}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if res.Content != "hello\n" {
+		t.Fatalf("unexpected content: %q", res.Content)
+	}
+}
+
+func TestFileReadParseErrors(t *testing.T) {
+	tool := readTool(nil)
 	cases := []string{
 		``,
 		`not json`,
@@ -297,7 +331,7 @@ func TestFileReadRegisteredTool(t *testing.T) {
 	writeFile(t, filepath.Join(root, "app.env"), []byte("FOO=bar\n"))
 
 	registry := agent.NewRegistry()
-	if err := registry.Register(NewFileReadTool(newTestLoader(t, root))); err != nil {
+	if err := registry.Register(readTool(newTestLoader(t, root))); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})
@@ -321,7 +355,7 @@ func TestFileReadRegisteredTool(t *testing.T) {
 
 func TestFileReadRegistryPayloadValidation(t *testing.T) {
 	registry := agent.NewRegistry()
-	if err := registry.Register(NewFileReadTool(nil)); err != nil {
+	if err := registry.Register(readTool(nil)); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 	exec := agent.NewRegistryExecutor(registry, agent.ExecutionPolicy{Enabled: true})

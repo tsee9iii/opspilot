@@ -16,7 +16,13 @@ type fakeConfirmationResolver struct {
 }
 
 func (f *fakeConfirmationResolver) ConfirmationLevel(context.Context, uuid.UUID, string) (string, error) {
-	return f.level, nil
+	level := f.level
+	if level == "" {
+		// A real resolver never returns an empty level for a known,
+		// available capability (command creation fails closed).
+		level = "none"
+	}
+	return level, nil
 }
 
 type fakeRepo struct {

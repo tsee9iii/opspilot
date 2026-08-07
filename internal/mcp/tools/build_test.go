@@ -6,6 +6,7 @@ import (
 	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 	"github.com/tsee9iii/opspilot/internal/application/dispatch"
 	"github.com/tsee9iii/opspilot/internal/application/inventory"
+	"github.com/tsee9iii/opspilot/internal/mcp"
 )
 
 // TestBuildDefinesMilestoneTools pins the exact set of MCP tools exposed to
@@ -89,5 +90,62 @@ func TestWorkflowDispatchToolConstants(t *testing.T) {
 		dispatch.FilesystemListTool != "filesystem.list" ||
 		dispatch.DockerInspectTool != "docker.inspect" {
 		t.Fatalf("unexpected wire constants: %q %q %q %q %q", dispatch.WorkflowDiagnoseTool, dispatch.WorkflowDeployTool, dispatch.FileReadTool, dispatch.FilesystemListTool, dispatch.DockerInspectTool)
+	}
+}
+
+func toolNames(ts *mcp.ToolSet) map[string]bool {
+	seen := map[string]bool{}
+	for _, def := range ts.Definitions() {
+		seen[def.Name] = true
+	}
+	return seen
+}
+
+// TestBuildReadOnlyExcludesExecutionTools pins the safe default: a read-only
+// MCP process exposes inventory and read-only investigation tools but never
+// registers deployment or diagnostic execution tools.
+func TestBuildReadOnlyExcludesExecutionTools(t *testing.T) {
+	ts := Build(Dependencies{
+		Servers:    inventory.NewListServersUseCase(&fakeServerRepo{}),
+		Agents:     inventory.NewListAgentsUseCase(&fakeAgentRepo{}),
+		Commands:   inventory.NewListCommandsUseCase(&fakeCommandRepo{}),
+		GetCommand: appcommand.NewGetCommandUseCase(&dispatchRepo{}),
+		Dispatch:   newDispatch(&dispatchRepo{}),
+		ReadOnly:   true,
+	})
+
+	seen := toolNames(ts)
+	for _, must := range []string{"ping", "list_servers", "list_agents", "list_commands", "get_command", "file_read", "filesystem_list", "docker_inspect"} {
+		if !seen[must] {
+			t.Fatalf("read-only toolset must include %s", must)
+		}
+	}
+	for _, banned := range []string{"workflow_deploy", "workflow_diagnose"} {
+		if seen[banned] {
+			t.Fatalf("read-only toolset must not register execution tool %s", banned)
+		}
+		if _, ok := ts.Get(banned); ok {
+			t.Fatalf("execution tool %s must not be callable in read-only mode", banned)
+		}
+	}
+}
+
+// TestBuildOptInEnablesExecutionTools proves the explicit opt-out (ReadOnly
+// false) registers the deployment and diagnostic execution tools again.
+func TestBuildOptInEnablesExecutionTools(t *testing.T) {
+	ts := Build(Dependencies{
+		Servers:    inventory.NewListServersUseCase(&fakeServerRepo{}),
+		Agents:     inventory.NewListAgentsUseCase(&fakeAgentRepo{}),
+		Commands:   inventory.NewListCommandsUseCase(&fakeCommandRepo{}),
+		GetCommand: appcommand.NewGetCommandUseCase(&dispatchRepo{}),
+		Dispatch:   newDispatch(&dispatchRepo{}),
+		ReadOnly:   false,
+	})
+
+	seen := toolNames(ts)
+	for _, want := range []string{"workflow_deploy", "workflow_diagnose", "file_read", "filesystem_list", "docker_inspect"} {
+		if !seen[want] {
+			t.Fatalf("opt-in toolset must include %s", want)
+		}
 	}
 }

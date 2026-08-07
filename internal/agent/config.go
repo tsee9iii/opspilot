@@ -4,6 +4,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"time"
 
@@ -27,6 +28,33 @@ type Config struct {
 	PollInterval      int                   `yaml:"poll_interval"`
 	ExecutionPolicy   ExecutionPolicyConfig `yaml:"execution_policy"`
 	ProjectConfigs    []project.Config      `yaml:"projects"`
+	// AllowInsecureCentral permits an http:// central_url even when the agent
+	// reports a production environment. It exists only for local development
+	// against a TLS-terminated proxy and defaults to deny.
+	AllowInsecureCentral bool             `yaml:"allow_insecure_central"`
+	Filesystem           FilesystemConfig `yaml:"filesystem"`
+	HTTPCheck            HTTPCheckConfig  `yaml:"http_check"`
+}
+
+type FilesystemConfig struct {
+	// AllowAbsolutePaths lets file.read / filesystem.list accept absolute
+	// filesystem paths. Defaults to deny; enable only when every tool caller
+	// is trusted (Hermes is not reachable by untrusted parties).
+	AllowAbsolutePaths bool `yaml:"allow_absolute_paths"`
+}
+
+type HTTPCheckConfig struct {
+	// AllowEndpoints is an exact-URL allowlist for http.check (e.g. local
+	// health endpoints). Configuring any of these allowlists restricts the
+	// tool to exactly those destinations.
+	AllowEndpoints []string `yaml:"allow_endpoints"`
+	// AllowHosts is a hostname allowlist for http.check.
+	AllowHosts []string `yaml:"allow_hosts"`
+	// AllowCIDRs is a CIDR allowlist for http.check (public or private).
+	AllowCIDRs []string `yaml:"allow_cidrs"`
+	// AllowPrivate opts into loopback, link-local and RFC1918 private ranges
+	// for http.check. Defaults to deny.
+	AllowPrivate bool `yaml:"allow_private"`
 }
 
 type ExecutionPolicyConfig struct {
@@ -60,7 +88,25 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	cfg.profiles = profiles
 
+	if err := cfg.validateTransportSecurity(); err != nil {
+		return nil, err
+	}
+
 	return &cfg, nil
+}
+
+// validateTransportSecurity enforces the production TLS requirement: in a
+// production environment the agent must talk to central over HTTPS. The
+// development-only escape hatch (AllowInsecureCentral) is never a default.
+func (c *Config) validateTransportSecurity() error {
+	if c.Server.Environment != "production" || c.AllowInsecureCentral {
+		return nil
+	}
+	u, err := url.Parse(c.CentralURL)
+	if err != nil || u.Scheme != "https" {
+		return errors.New("agent config: central_url must use https:// in production; set allow_insecure_central: true only for local development behind TLS")
+	}
+	return nil
 }
 
 // Save persists the config file, including the locally assigned AgentID.

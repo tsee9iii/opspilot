@@ -90,7 +90,13 @@ type fakeConfirmationResolver struct {
 }
 
 func (f *fakeConfirmationResolver) ConfirmationLevel(context.Context, uuid.UUID, string) (string, error) {
-	return f.level, nil
+	level := f.level
+	if level == "" {
+		// Real resolvers fail closed; tests default to a known available
+		// capability that needs no confirmation.
+		level = "none"
+	}
+	return level, nil
 }
 
 // newDispatch builds a real DispatchUseCase backed by fakes.

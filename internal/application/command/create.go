@@ -14,6 +14,13 @@ var (
 	ErrPayloadRequired = errors.New("payload is required")
 	ErrResultRequired  = errors.New("result is required")
 	ErrErrorRequired   = errors.New("error is required")
+	// ErrCapabilityNotFound rejects a command whose target agent has not
+	// advertised the requested tool. Unknown tools are never silently treated
+	// as approved.
+	ErrCapabilityNotFound = errors.New("agent has not advertised this tool")
+	// ErrCapabilityUnavailable rejects a command whose target agent advertised
+	// the tool but reported it as currently unavailable.
+	ErrCapabilityUnavailable = errors.New("tool is not currently available on the agent")
 )
 
 type CreateCommandRequest struct {
@@ -69,6 +76,11 @@ func (uc *CreateUseCase) Create(ctx context.Context, req CreateCommandRequest) (
 	level, err := uc.confirm.ConfirmationLevel(ctx, agentID, req.Tool)
 	if err != nil {
 		return CreateCommandResponse{}, fmt.Errorf("create command: resolve confirmation: %w", err)
+	}
+	if level == "" {
+		// Fail closed: a resolver that returns an empty level (e.g. a missing
+		// capability row) must never default the command to approved.
+		return CreateCommandResponse{}, fmt.Errorf("create command: resolve confirmation: %w", ErrCapabilityNotFound)
 	}
 
 	req.ConfirmationStatus = ConfirmationApproved

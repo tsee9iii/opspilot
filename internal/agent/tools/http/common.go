@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"syscall"
 	"time"
 )
@@ -15,30 +14,6 @@ import (
 // noRedirect stops http.Client from following redirects.
 func noRedirect(_ *http.Request, _ []*http.Request) error {
 	return http.ErrUseLastResponse
-}
-
-// buildClient builds an HTTP client with the given timeout that never follows
-// redirects.
-func buildClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout:       timeout,
-		CheckRedirect: noRedirect,
-	}
-}
-
-// validateURL accepts only absolute http:// or https:// URLs.
-func validateURL(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("invalid URL: %w", err)
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", fmt.Errorf("unsupported scheme %q: only http:// and https:// are allowed", u.Scheme)
-	}
-	if u.Host == "" {
-		return "", errors.New("invalid URL: missing host")
-	}
-	return u.String(), nil
 }
 
 // performRequest sends a single request and returns the response and the

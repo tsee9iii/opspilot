@@ -57,7 +57,7 @@ func NewRouter(deps RouterDeps, agents *AgentHandler, commands *CommandHandler, 
 	mux.Handle("POST /api/v1/agents/register", chain(http.HandlerFunc(agents.Register), global...))
 	mux.Handle("POST /api/v1/agents/heartbeat", chain(http.HandlerFunc(agents.Heartbeat), agentAuth...))
 	mux.Handle("POST /api/v1/agents/unregister", chain(http.HandlerFunc(agents.Unregister), agentAuth...))
-	mux.Handle("POST /api/v1/commands", chain(http.HandlerFunc(commands.Create), global...))
+	mux.Handle("POST /api/v1/commands", chain(http.HandlerFunc(commands.Create), operatorAuth...))
 	mux.Handle("GET /api/v1/commands/{id}", chain(http.HandlerFunc(commands.Get), operatorAuth...))
 	mux.Handle("POST /api/v1/commands/lease", chain(http.HandlerFunc(commands.Lease), agentAuth...))
 	mux.Handle("POST /api/v1/commands/start", chain(http.HandlerFunc(commands.Start), agentAuth...))

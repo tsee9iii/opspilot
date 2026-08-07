@@ -371,6 +371,12 @@ RestartSec=5
 User=opspilot
 Group=opspilot
 WorkingDirectory=/etc/opspilot
+# Hardening: the agent needs to read/write its config, project repos, and
+# connect to Docker/PM2/logs, so full ProtectSystem/ProtectHome would break
+# deployments. We apply the safe subset: no privilege escalation and a private
+# /tmp.
+NoNewPrivileges=true
+PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target

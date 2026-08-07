@@ -44,6 +44,18 @@ func mapDispatchError(err error) error {
 			Message:    "The agent id is not valid.",
 			Suggestion: "Use list_agents to find a valid agent id.",
 		}
+	case errors.Is(err, appcommand.ErrCapabilityNotFound):
+		return &mcp.ToolError{
+			Code:       "capability_not_found",
+			Message:    "The agent has not advertised this tool.",
+			Suggestion: "Check the agent's tool list with list_agents, or target an agent that supports this tool.",
+		}
+	case errors.Is(err, appcommand.ErrCapabilityUnavailable):
+		return &mcp.ToolError{
+			Code:       "capability_unavailable",
+			Message:    "The tool is not currently available on the agent.",
+			Suggestion: "Retry later once the agent has re-advertised the tool as available.",
+		}
 	case errors.Is(err, dispatch.ErrTimeout):
 		return &mcp.ToolError{
 			Code:       "command_timeout",

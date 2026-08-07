@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -56,14 +57,28 @@ type httpCheckResult struct {
 	DurationMs     int64  `json:"duration_ms"`
 }
 
-// HTTPCheckTool performs a read-only HTTP health check. It never follows
-// redirects and never returns the response body or headers.
+// HTTPCheckTool performs a read-only HTTP health check. It is SSRF-hardened:
+// destinations are validated against a Policy (restricted network ranges are
+// denied by default), every resolved IP is validated before connecting, the
+// connection is pinned to a validated IP, redirects are never followed, and
+// response bodies and headers are never returned.
 type HTTPCheckTool struct {
-	buildClient func(timeout time.Duration) *http.Client
+	policy Policy
+	// resolveHost resolves a hostname to IPs. Overridable in tests.
+	resolveHost func(ctx context.Context, host string) ([]net.IP, error)
+	// dial opens a connection to ip:port. Overridable in tests.
+	dial func(ctx context.Context, network, ip, port string) (net.Conn, error)
 }
 
+// NewHTTPCheckTool builds a tool with an empty Policy: restricted ranges are
+// denied, public destinations remain reachable until an allowlist is set.
 func NewHTTPCheckTool() *HTTPCheckTool {
-	return &HTTPCheckTool{buildClient: buildClient}
+	return NewHTTPCheckToolWithPolicy(Policy{})
+}
+
+// NewHTTPCheckToolWithPolicy builds a tool with an explicit destination policy.
+func NewHTTPCheckToolWithPolicy(p Policy) *HTTPCheckTool {
+	return &HTTPCheckTool{policy: p}
 }
 
 func (t *HTTPCheckTool) Name() string {
@@ -110,13 +125,13 @@ func (t *HTTPCheckTool) Execute(ctx context.Context, payload []byte) ([]byte, er
 		return nil, err
 	}
 
-	validatedURL, err := validateURL(req.URL)
+	target, err := t.validateTarget(ctx, req.URL)
 	if err != nil {
 		return nil, fmt.Errorf("http.check: %w", err)
 	}
 
-	client := t.buildClient(time.Duration(req.TimeoutSeconds) * time.Second)
-	resp, duration, err := performRequest(ctx, client, http.MethodGet, validatedURL)
+	client := t.buildPinnedClient(target, time.Duration(req.TimeoutSeconds)*time.Second)
+	resp, duration, err := performRequest(ctx, client, http.MethodGet, req.URL)
 	if err != nil {
 		return nil, fmt.Errorf("http.check: %w", classifyRequestError(err))
 	}
@@ -130,6 +145,29 @@ func (t *HTTPCheckTool) Execute(ctx context.Context, payload []byte) ([]byte, er
 		Healthy:        resp.StatusCode == req.ExpectedStatus,
 		DurationMs:     duration.Milliseconds(),
 	})
+}
+
+// buildPinnedClient builds an HTTP client whose transport dials exactly the
+// validated target IP:port, while the request keeps the original hostname for
+// the Host header and TLS SNI. This prevents DNS rebinding after validation.
+// Redirects are never followed.
+func (t *HTTPCheckTool) buildPinnedClient(target target, timeout time.Duration) *http.Client {
+	dial := t.dial
+	if dial == nil {
+		d := &net.Dialer{Timeout: timeout}
+		dial = func(ctx context.Context, network, ip, port string) (net.Conn, error) {
+			return d.DialContext(ctx, network, net.JoinHostPort(ip, port))
+		}
+	}
+	return &http.Client{
+		Timeout:       timeout,
+		CheckRedirect: noRedirect,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+				return dial(ctx, network, target.ip, target.port)
+			},
+		},
+	}
 }
 
 // parseHTTPCheckRequest extracts and validates the payload. expected_status

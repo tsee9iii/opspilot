@@ -1,11 +1,22 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 
 	"gopkg.in/yaml.v3"
+)
+
+// Development-only default credentials. They exist purely so a developer can
+// boot the stack without any environment; production Validate rejects them.
+const (
+	DevServerSecret  = "dev-only-secret-change-me"
+	DevOperatorToken = "dev-operator-token-change-me"
+	DevDBPassword    = "opspilot"
+	DevSSLMode       = "disable"
+	DevHTTPHost      = "0.0.0.0"
 )
 
 type Config struct {
@@ -36,7 +47,43 @@ type Config struct {
 		// ExecutionTimeoutSeconds is the default timeout for dispatched
 		// workflow commands that require no operator confirmation.
 		ExecutionTimeoutSeconds int
+		// ReadOnly disables execution/dispatch MCP tools so the Hermes
+		// integration cannot mutate servers or deploy. It is enabled by
+		// default; execution requires an explicit opt-out.
+		ReadOnly bool
 	}
+}
+
+// Validate fails closed on unsafe production configuration. In development the
+// built-in dev credentials are accepted so the stack boots with zero
+// environment; in production every known-default or missing secret is rejected
+// and the database must use TLS. Errors reference environment variable names
+// only — secret values are never included.
+func (c *Config) Validate() error {
+	if c == nil {
+		return errors.New("config: nil configuration")
+	}
+	if c.Env != "production" {
+		return nil
+	}
+
+	var errs []error
+	if c.Auth.ServerSecret == "" || c.Auth.ServerSecret == DevServerSecret {
+		errs = append(errs, errors.New("config: OPSPILOT_AUTH_SERVER_SECRET must be set to a non-default value in production"))
+	}
+	if c.Auth.OperatorToken == "" || c.Auth.OperatorToken == DevOperatorToken {
+		errs = append(errs, errors.New("config: OPSPILOT_OPERATOR_TOKEN must be set to a non-default value in production"))
+	}
+	if c.Database.Password == "" || c.Database.Password == DevDBPassword {
+		errs = append(errs, errors.New("config: OPSPILOT_DB_PASSWORD must be set to a non-default value in production"))
+	}
+	if c.Database.SSLMode == "" || c.Database.SSLMode == DevSSLMode {
+		errs = append(errs, errors.New("config: OPSPILOT_DB_SSLMODE must not be 'disable' in production"))
+	}
+	if c.HTTP.Host == "" || c.HTTP.Host == DevHTTPHost {
+		errs = append(errs, errors.New("config: OPSPILOT_HTTP_HOST must not bind 0.0.0.0 in production"))
+	}
+	return errors.Join(errs...)
 }
 
 // fileConfig is the on-disk YAML representation. YAML keys map onto the Config
@@ -66,7 +113,8 @@ type fileConfig struct {
 		LeaseTTLSeconds int `yaml:"lease_ttl_seconds"`
 	} `yaml:"commands"`
 	MCP struct {
-		ExecutionTimeoutSeconds int `yaml:"execution_timeout_seconds"`
+		ExecutionTimeoutSeconds int   `yaml:"execution_timeout_seconds"`
+		ReadOnly                *bool `yaml:"read_only"`
 	} `yaml:"mcp"`
 }
 
@@ -98,24 +146,25 @@ func defaults() *Config {
 	cfg := &Config{}
 	cfg.Env = "development"
 
-	cfg.HTTP.Host = "0.0.0.0"
+	cfg.HTTP.Host = DevHTTPHost
 	cfg.HTTP.Port = 8080
 
 	cfg.Database.Host = "localhost"
 	cfg.Database.Port = 5432
 	cfg.Database.User = "opspilot"
-	cfg.Database.Password = "opspilot"
+	cfg.Database.Password = DevDBPassword
 	cfg.Database.Name = "opspilot"
-	cfg.Database.SSLMode = "disable"
+	cfg.Database.SSLMode = DevSSLMode
 
 	cfg.Logger.Level = "info"
 
-	cfg.Auth.ServerSecret = "dev-only-secret-change-me"
-	cfg.Auth.OperatorToken = "dev-operator-token-change-me"
+	cfg.Auth.ServerSecret = DevServerSecret
+	cfg.Auth.OperatorToken = DevOperatorToken
 
 	cfg.Commands.LeaseTTLSeconds = 60
 
 	cfg.MCP.ExecutionTimeoutSeconds = 300
+	cfg.MCP.ReadOnly = true
 
 	return cfg
 }
@@ -193,6 +242,9 @@ func applyFile(fc *fileConfig, cfg *Config) {
 	if fc.MCP.ExecutionTimeoutSeconds != 0 {
 		cfg.MCP.ExecutionTimeoutSeconds = fc.MCP.ExecutionTimeoutSeconds
 	}
+	if fc.MCP.ReadOnly != nil {
+		cfg.MCP.ReadOnly = *fc.MCP.ReadOnly
+	}
 }
 
 // applyEnv overlays environment variables (highest priority).
@@ -217,6 +269,7 @@ func applyEnv(cfg *Config) {
 	cfg.Commands.LeaseTTLSeconds = getEnvInt("OPSPILOT_COMMAND_LEASE_TTL_SECONDS", cfg.Commands.LeaseTTLSeconds)
 
 	cfg.MCP.ExecutionTimeoutSeconds = getEnvInt("OPSPILOT_MCP_EXECUTION_TIMEOUT_SECONDS", cfg.MCP.ExecutionTimeoutSeconds)
+	cfg.MCP.ReadOnly = getEnvBool("OPSPILOT_MCP_READ_ONLY", cfg.MCP.ReadOnly)
 }
 
 func getEnv(key, fallback string) string {
@@ -230,6 +283,15 @@ func getEnvInt(key string, fallback int) int {
 	if v, ok := os.LookupEnv(key); ok && v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return fallback

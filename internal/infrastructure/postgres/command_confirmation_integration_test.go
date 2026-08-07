@@ -32,19 +32,46 @@ func TestCommandConfirmation(t *testing.T) {
 	commandRepo := NewCommandRepository(pool)
 	capabilityRepo := NewCapabilityRepository(pool)
 
-	// Capability confirmation resolution.
-	if lvl, err := capabilityRepo.ConfirmationLevel(ctx, agentID, "system.uptime"); err != nil || lvl != "" {
-		t.Fatalf("expected empty level for unknown tool, got %q (err %v)", lvl, err)
+	// Capability confirmation resolution fails closed.
+	if lvl, err := capabilityRepo.ConfirmationLevel(ctx, agentID, "system.uptime"); !errors.Is(err, appcommand.ErrCapabilityNotFound) || lvl != "" {
+		t.Fatalf("expected ErrCapabilityNotFound for unknown tool, got level %q (err %v)", lvl, err)
 	}
 	if err := capabilityRepo.Upsert(ctx, agentID, appcapability.Capability{
 		ToolName: "pm2.restart", Version: "1.0.0", Description: "restart",
 		ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "required",
+		Available: true,
 	}); err != nil {
 		t.Fatalf("upsert capability: %v", err)
 	}
 	if lvl, err := capabilityRepo.ConfirmationLevel(ctx, agentID, "pm2.restart"); err != nil || lvl != "required" {
 		t.Fatalf("expected required level, got %q (err %v)", lvl, err)
 	}
+
+	t.Run("unavailable capability is rejected at command creation", func(t *testing.T) {
+		if err := capabilityRepo.Upsert(ctx, agentID, appcapability.Capability{
+			ToolName: "pm2.restart", Version: "1.0.0", Description: "restart",
+			ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "required",
+			Available: false, UnavailableReason: "pm2 is not installed",
+		}); err != nil {
+			t.Fatalf("upsert unavailable capability: %v", err)
+		}
+		if _, err := capabilityRepo.ConfirmationLevel(ctx, agentID, "pm2.restart"); !errors.Is(err, appcommand.ErrCapabilityUnavailable) {
+			t.Fatalf("expected ErrCapabilityUnavailable, got: %v", err)
+		}
+		create := appcommand.NewCreateUseCase(commandRepo, capabilityRepo)
+		if _, err := create.Create(ctx, appcommand.CreateCommandRequest{
+			AgentID: agentID.String(), Tool: "pm2.restart", Payload: []byte(`{"process":"web"}`),
+		}); !errors.Is(err, appcommand.ErrCapabilityUnavailable) {
+			t.Fatalf("expected command creation rejected for unavailable tool, got: %v", err)
+		}
+		if err := capabilityRepo.Upsert(ctx, agentID, appcapability.Capability{
+			ToolName: "pm2.restart", Version: "1.0.0", Description: "restart",
+			ParameterSchema: []byte(`{"type":"object","properties":{}}`), Confirmation: "required",
+			Available: true,
+		}); err != nil {
+			t.Fatalf("re-upsert available capability: %v", err)
+		}
+	})
 
 	t.Run("approved command is leasable immediately", func(t *testing.T) {
 		resp, err := commandRepo.CreateCommand(ctx, appcommand.CreateCommandRequest{
