@@ -18,8 +18,15 @@ Architectural decisions are documented in:
 | Feature                                          | Central                         | Agent                    | Status          |
 | ------------------------------------------------ | ------------------------------- | ------------------------ | --------------- |
 | HTTP server with graceful shutdown               | `cmd/central`                   | —                        | Implemented     |
-| Agent registration (HMAC token, Argon2id secret) | `POST /api/v1/agents/register`  | startup                  | Implemented     |
+| Agent registration (HMAC token, issued signing key) | `POST /api/v1/agents/register` | startup               | Implemented     |
+| Agent request signing (HMAC-SHA256)              | `AgentAuth` middleware          | `internal/agentsign`     | Implemented     |
 | Agent heartbeat                                  | `POST /api/v1/agents/heartbeat` | 30s loop                 | Implemented     |
+| Agent health reporting                           | `POST /api/v1/agents/health`, `GET /api/v1/health` | health collector loop | Implemented |
+| SSE command wake-ups                             | `GET /api/v1/agents/events`     | SSE listener             | Implemented     |
+| Alert evaluation + acknowledge                   | `GET /api/v1/alerts`, `POST /api/v1/alerts/{id}/acknowledge` | — | Implemented |
+| Signed outbound alert webhooks                   | `internal/infrastructure/webhook` | —                      | Implemented     |
+| Operator auth + audit actor                      | `OperatorAuth` + `X-Operator-Actor` | —                    | Implemented     |
+| MCP stdio server (mode-gated toolset)            | `cmd/mcp`, `internal/mcp`       | —                        | Implemented     |
 | Agent unregister (lifecycle)                     | `POST /api/v1/agents/unregister` | —                        | Implemented     |
 | Command creation                                 | `POST /api/v1/commands`         | —                        | Implemented     |
 | Command leasing (atomic, FIFO)                   | `POST /api/v1/commands/lease`   | poll loop                | Implemented     |
@@ -29,6 +36,7 @@ Architectural decisions are documented in:
 | Confirmation policy (none / required)            | persisted per capability        | metadata on each tool    | Implemented     |
 | Confirmation enforcement                          | `commands.confirmation_status`  | —                        | Implemented     |
 | Payload schema validation                        | —                               | `gojsonschema` in executor | Implemented     |
+| Tool catalog metadata (category, risk, tags)     | —                               | `Tool.Metadata()` + registry validation | Implemented |
 | Capability availability                          | `capabilities.available`, `capabilities.unavailable_reason` | per-tool `Availability` check, synced at startup | Implemented |
 | Tool Registry | — | `Register`/`Find`/`List` | Implemented |
 | `system.uptime` tool | — | `/usr/bin/uptime` | Implemented |
@@ -49,9 +57,15 @@ Architectural decisions are documented in:
 | `git.current_commit` tool | — | `git log -1 --pretty=format:%H%n%h%n%an%n%ae%n%ad%n%s` | Implemented |
 | `git.branch` tool | — | `git branch --show-current` + `git rev-parse @{u}` | Implemented |
 | `git.pull` tool | — | `git pull --ff-only` | Implemented |
-| `http.check` tool | — | HTTP GET health check | Implemented |
-| Project Profiles (foundation) | — | config + discovery of `projects:` profiles | Implemented |
-| Workflow engine (foundation) | — | step state machine, simulated execution | Implemented |
+| `docker.inspect` tool | — | `docker inspect` (read-only) | Implemented |
+| `http.check` tool | — | SSRF-hardened HTTP GET health check | Implemented |
+| `file.read` tool | — | project-root-scoped file read | Implemented |
+| `filesystem.list` tool | — | project-root-scoped directory listing | Implemented |
+| `workflow.diagnose` tool | — | `internal/agent/tools/diagnose` | Implemented |
+| `workflow.deploy` tool | — | `internal/agent/tools/deploy` | Implemented |
+| `deploy.project` tool | — | strategy registry (docker-compose / pm2 / script) | Implemented |
+| Project Profiles | — | config + discovery of `projects:` profiles | Implemented |
+| Workflow engine | — | step state machine, real execution via RegistryExecutor | Implemented |
 | Deploy workflow (execution) | — | git.pull → restart → optional http.check via RegistryExecutor | Implemented |
 | Diagnose workflow (execution) | — | system.* + platform + logs + optional http.check, continue-on-failure | Implemented |
 | Agent installer (Phase 2, auto-register)          | —                               | `scripts/install.sh`     | Implemented     |
@@ -60,11 +74,12 @@ Architectural decisions are documented in:
 | Embedded migration framework                     | `internal/migration/` + `cmd/migrate` | auto-migrate on central startup | Implemented     |
 | Config loading (YAML + env precedence)           | `pkg/config` (`/etc/opspilot/central.yaml`, `OPSPILOT_CONFIG`) | —            | Implemented     |
 | Capability registration                          | `POST /api/v1/capabilities`     | startup sync             | Implemented     |
-| WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
-| Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
 | Command results query API                        | `GET /api/v1/commands/{id}`     | —                       | Implemented     |
 | Registration token CLI                           | `opspilot-central token <create/list/revoke>` | —             | Implemented     |
+| WebSocket / Telegram / AI                        | —                               | —                        | Not Implemented |
+| Docker SDK, sandboxing                           | —                               | —                        | Not Implemented |
 | Token rotation, metrics                          | —                               | —                        | Not Implemented |
+| Multi-instance central wake-ups (LISTEN/NOTIFY)  | —                               | —                        | Not Implemented |
 
 ## 2. HTTP API
 
@@ -76,7 +91,9 @@ All JSON. Errors use `{"error":{"code","message"}}`.
 | POST   | `/api/v1/agents/register`   | token           | `201 {agent_id,status,signing_key}`      | 400 `validation_error`, 401 `invalid_token`, 409 `token_already_used`, 500   |
 | POST   | `/api/v1/agents/heartbeat`  | HMAC signing    | `200 {status,next_heartbeat}`            | 400, 401 `invalid_signature`, 500                                            |
 | POST   | `/api/v1/agents/unregister` | HMAC signing    | `200 {status:"unregistered"}`           | 400, 401 `invalid_signature`, 404 `agent_not_found`, 500                     |
-| POST   | `/api/v1/commands`          | —               | `201 {command_id,status}`                | 400, 500                                                                     |
+| POST   | `/api/v1/agents/health`     | HMAC signing    | `200 {status}`                           | 400 `validation_error`, 401 `invalid_signature`, 500                         |
+| GET    | `/api/v1/agents/events`     | HMAC signing    | `200 text/event-stream`                  | 401 `invalid_signature`                                                      |
+| POST   | `/api/v1/commands`          | operator bearer | `201 {command_id,status}`                | 400 `validation_error` / `capability_not_found`, 401 `unauthorized`, 409 `capability_unavailable`, 500 |
 | POST   | `/api/v1/commands/lease`    | HMAC signing    | `200 {command_id,tool,payload}` or `204` | 400, 401 `invalid_signature`, 500                                            |
 | POST   | `/api/v1/commands/start`    | HMAC signing    | `200 {command_id,status}`                | 400, 401, 403 `command_not_owned`, 404 `not_found`, 409 `invalid_transition`, 500 |
 | POST   | `/api/v1/commands/complete` | HMAC signing    | `200 {command_id,status}`                | same as `start`                                                              |
@@ -84,6 +101,14 @@ All JSON. Errors use `{"error":{"code","message"}}`.
 | POST   | `/api/v1/commands/approve`  | operator bearer | `200 {status}`                           | 400 `validation_error`, 401 `unauthorized`, 404 `command_not_found`, 500      |
 | GET    | `/api/v1/commands/{id}`    | operator bearer | `200 {command}`, see below               | 400 `invalid_command_id`, 401 `unauthorized`, 404 `command_not_found`, 500    |
 | POST   | `/api/v1/capabilities`      | HMAC signing    | `200 {status,count}`                     | 400, 401 `invalid_signature`, 500                                            |
+| GET    | `/api/v1/health`            | operator bearer | `200 {agents:[…]}`                       | 401 `unauthorized`, 500                                                      |
+| GET    | `/api/v1/alerts`            | operator bearer | `200 {alerts:[…],total}`                 | 400 `validation_error`, 401 `unauthorized`, 500                              |
+| POST   | `/api/v1/alerts/{id}/acknowledge` | operator bearer | `200 {alert}`                    | 400 `validation_error`, 401 `unauthorized`, 404 `alert_not_found`, 500        |
+
+Operator routes require **both** the `Authorization: Bearer <operator token>`
+header and the `X-Operator-Actor` header (1–128 chars, control characters
+rejected). The actor is persisted on the affected record, so approval and
+acknowledge chains are attributable (§25).
 
 HMAC signing (see §8): every agent request carries `X-Agent-Id`,
 `X-Agent-Timestamp`, `X-Agent-Nonce`, `X-Agent-Signature` computed over
@@ -99,8 +124,12 @@ Request bodies:
 - `create`: `agent_id`, `tool`, `payload` (JSON object)
 - `lease`: `agent_id`
 - `start`/`complete`/`fail`: `agent_id`, `command_id` (+ `result` for complete, `error` for fail)
-- `approve`: `command_id`
+- `approve`: `command_id`, optional `approval_note`
 - `capabilities`: `agent_id`, `capabilities[{tool_name,version,description,parameter_schema,confirmation_level,available,unavailable_reason}]`
+- `health`: `agent_id`, `status`, optional `reported_at`, `agent_version`,
+  `hostname`, `environment`, `cpu_user_percent`, `cpu_system_percent`,
+  `cpu_idle_percent`, `memory_used_percent`, `disk_used_percent`; the **raw
+  request body** is stored verbatim as `agent_health.snapshot` (§26)
 
 `GET /api/v1/commands/{id}` response body:
 
@@ -126,7 +155,7 @@ command completes.
 
 ## 3. Database schema
 
-Migrations (`sql/migrations/0001..0011`):
+Migrations (`sql/migrations/0001..0014`):
 
 - `0001_init.sql` — `servers`, `agents`, `commands`
 - `0002_agent_auth.sql` — `registration_tokens`
@@ -144,6 +173,15 @@ Migrations (`sql/migrations/0001..0011`):
   existing agents to `online`
 - `0011_agent_signing_key.sql` — adds `agents.signing_key`, the per-agent HMAC
   signing key issued at registration and used to sign every agent request
+- `0012_command_audit.sql` — adds the immutable audit trail on `commands`:
+  `source` (`api` | `mcp` | `system`, default `api`), `requested_by`,
+  `requested_at`, plus the approval fields `approved_by`, `approved_at`,
+  `approval_note`; indexes `idx_commands_source`
+- `0013_agent_health.sql` — `agent_health`, the **latest** health snapshot per
+  agent (`agent_id` is the primary key, so a new report overwrites the previous
+  one; no history is retained)
+- `0014_alerts.sql` — `alerts` plus a partial unique index enforcing at most one
+  `open` alert per `(agent_id, rule_type)`
 
 The migration runner (see §22) creates a `schema_migrations` bookkeeping table
 (`version TEXT PRIMARY KEY`, `applied_at TIMESTAMPTZ NOT NULL DEFAULT now()`)
@@ -159,7 +197,9 @@ Tables:
 - **commands** — `id`, `agent_id` FK, `tool_name`, `payload` JSONB, `status`,
   `result` JSONB, `error`, `leased_at`, `lease_owner`, `started_at`,
   `completed_at`, `confirmation_status` (`approved` | `pending`, default
-  `approved`), `confirmed_at`, `created_at`, `updated_at`. State machine:
+  `approved`), `confirmed_at`, the audit columns `source` / `requested_by` /
+  `requested_at` / `approved_by` / `approved_at` / `approval_note` (§25),
+  `created_at`, `updated_at`. State machine:
   `pending → leased → running → completed | failed`, enforced by atomic
   `UPDATE ... WHERE status = '<expected>'`. Commands are only leased when
   `confirmation_status = 'approved'`; `pending` commands wait for
@@ -173,9 +213,21 @@ Tables:
   (default `true`), `unavailable_reason` TEXT (default `''`; non-empty only
   when `available = false`), `created_at`,
   `updated_at`; `UNIQUE (agent_id, tool_name)`.
+- **agent_health** — `agent_id` PK/FK (`ON DELETE CASCADE`), `reported_at`,
+  `agent_version`, `hostname`, `environment`, `status`, `cpu_user_percent`,
+  `cpu_system_percent`, `cpu_idle_percent`, `memory_used_percent`,
+  `disk_used_percent` (all `DOUBLE PRECISION`), `snapshot` JSONB,
+  `created_at`, `updated_at`. One row per agent — the latest report only.
+- **alerts** — `id`, `agent_id` FK, `server_id` FK, `rule_type`, `severity`,
+  `status` (`open` | `acknowledged` | `resolved`), `message`, `first_seen_at`,
+  `last_seen_at`, `resolved_at`, `acknowledged_at`, `acknowledged_by`,
+  `created_at`, `updated_at`.
 
 Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
-`idx_capabilities_agent_id`.
+`idx_commands_source`, `idx_capabilities_agent_id`,
+`idx_agent_health_reported_at`, `idx_alerts_status_seen`, and the partial
+unique index `idx_alerts_open_agent_rule` on `(agent_id, rule_type)
+WHERE status = 'open'`.
 
 ## 4. Agent runtime
 
@@ -210,9 +262,13 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 
 - `internal/agent/registry.go` — `Tool` interface (`Name`, `Version`,
   `Description`, `ParameterSchema`, `ConfirmationLevel`,
-  `Availability(ctx) (bool, string)`, `Execute(ctx, payload)`)
+  `Availability(ctx) (bool, string)`, `Execute(ctx, payload)`, `Metadata()`)
   and a concurrency-safe `Registry` with `Register`, `Find`, `List` (sorted
-  names). `ParameterSchema` returns the tool's accepted payload as a JSON
+  names) and `ListMetadata` (the Tool Catalog). `Register` canonicalizes
+  `Name`, `Description`, `RequiresConfirmation` and `SinceVersion` from the
+  tool's own methods so the catalog can never drift from the executing tool,
+  and rejects invalid metadata at startup (§27).
+  `ParameterSchema` returns the tool's accepted payload as a JSON
   Schema document; tools that take no payload return
   `{"type":"object","properties":{}}`. `ConfirmationLevel` returns the tool's
   confirmation metadata: `agent.ConfirmationNone` (`"none"`) for read-only
@@ -251,12 +307,29 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
     `parseBranchHeader`, `parsePorcelainStatus`) for future Git tools.
   - `internal/agent/tools/http/` — `http.*` tools: `check.go`, plus
     `common.go` with reusable HTTP helpers (`buildClient`, `performRequest`,
-    `validateURL`, `classifyRequestError`) for future HTTP tools.
+    `validateURL`, `classifyRequestError`) and `ssrf.go` (IP-range denial,
+    connection pinning to the validated IP).
+  - `internal/agent/tools/file/` — `file.read`; `internal/agent/tools/filesystem/`
+    — `filesystem.list`; both resolve paths through
+    `internal/agent/tools/fsutil/path.go` against the configured project roots.
+  - `internal/agent/tools/diagnose/` — `workflow.diagnose`;
+    `internal/agent/tools/deploy/` — `workflow.deploy` and `deploy.project`.
+    Both are registered on top of the `RegistryExecutor`, so every step still
+    goes through registry → policy → schema validation → tool.
+- The full registered set (`cmd/agent/main.go`) is: `system.uptime`,
+  `system.memory`, `system.cpu`, `system.disk`, `system.processes`,
+  `pm2.list`, `pm2.logs`, `pm2.restart`, `docker.ps`, `docker.logs`,
+  `docker.restart`, `docker.inspect`, `systemctl.status`, `systemctl.restart`,
+  `journal.logs`, `git.status`, `git.current_commit`, `git.branch`,
+  `git.pull`, `http.check`, `file.read`, `filesystem.list`,
+  `workflow.diagnose`, `workflow.deploy`, `deploy.project`.
 - Current tools (read-only tools — `system.*`, `pm2.list`, `pm2.logs`,
-  `docker.ps`, `docker.logs`, `systemctl.status`, `journal.logs` — advertise
-  `confirmation_level = none`; write tools `pm2.restart`, `docker.restart`,
-  and `systemctl.restart`, and `git.pull` advertise
-  `confirmation_level = required`):
+  `docker.ps`, `docker.logs`, `docker.inspect`, `systemctl.status`,
+  `journal.logs`, `git.status`, `git.current_commit`, `git.branch`,
+  `http.check`, `file.read`, `filesystem.list`, `workflow.diagnose` —
+  advertise `confirmation_level = none`; write tools `pm2.restart`,
+  `docker.restart`, `systemctl.restart`, `git.pull`, `workflow.deploy` and
+  `deploy.project` advertise `confirmation_level = required`):
   - `system.uptime` — runs `/usr/bin/uptime` via `exec.CommandContext`;
     returns `{"stdout","stderr","exit_code"}`.
   - `system.memory` — parses `/proc/meminfo` (Linux only) and returns
@@ -441,8 +514,9 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
   `description`, `parameter_schema`, `confirmation_level`, `available`, and
   `unavailable_reason` to
   `POST /api/v1/capabilities` (one request, batch body).
-- Central (`internal/application/capability`) authenticates the agent (by id +
-  secret) then upserts each capability (`ON CONFLICT (agent_id, tool_name) DO
+- Central (`internal/application/capability`) receives the request already
+  authenticated by the `AgentAuth` HMAC middleware (§8), rejects agents whose
+  status is `unregistered`, then upserts each capability (`ON CONFLICT (agent_id, tool_name) DO
   UPDATE`), returning the number persisted. The parameter schema is stored in
   `capabilities.parameter_schema` (JSONB), the confirmation level in
   `capabilities.confirmation_level` (TEXT, validated to be `none` or
@@ -477,11 +551,29 @@ token)` hex, never plaintext. Registration consumes the row atomically; a
   backwards compatibility but is no longer verified per request. Agents whose
   status is `unregistered` are rejected with `401 invalid_credentials` on
   heartbeat and capability sync (§18).
-- **Operator endpoints**: `POST /api/v1/commands/approve` and
-  `GET /api/v1/commands/{id}` require a bearer token
+- **Operator endpoints**: `POST /api/v1/commands`, `GET /api/v1/commands/{id}`,
+  `POST /api/v1/commands/approve`, `GET /api/v1/health`, `GET /api/v1/alerts`
+  and `POST /api/v1/alerts/{id}/acknowledge` require a bearer token
   (`OPSPILOT_OPERATOR_TOKEN`, YAML `auth.operator_token`), verified
-  constant-time (`401 unauthorized`).
-- Command create is **not authenticated**; it is an internal enqueue endpoint.
+  constant-time (`401 unauthorized` — the response never reveals whether a
+  token was valid), plus the `X-Operator-Actor` header (§25).
+- **Command creation is operator-authenticated.** Enqueueing a command is
+  no longer an unauthenticated internal endpoint.
+- **Fail-closed capability resolution**: creating a command for a tool with no
+  registered capability is rejected with `400 capability_not_found`; a
+  registered-but-disabled capability is rejected with
+  `409 capability_unavailable`. The command row is never created.
+- **Fail-closed configuration** (`pkg/config.Validate`): in
+  `OPSPILOT_ENV=production` central refuses to start when
+  `OPSPILOT_AUTH_SERVER_SECRET`, `OPSPILOT_OPERATOR_TOKEN` or
+  `OPSPILOT_DB_PASSWORD` is unset or left at the built-in development default,
+  when `OPSPILOT_DB_SSLMODE` is `disable`, when `OPSPILOT_HTTP_HOST` binds
+  `0.0.0.0`, or when webhooks are enabled without an `https://` URL and a
+  secret. `OPSPILOT_MCP_MODE` is validated in every environment. Errors name
+  the offending variable but never its value.
+- **Request body limit**: the `MaxBodyBytes` middleware bounds every request
+  body; `Recovery` turns a handler panic into a 500 instead of killing the
+  process.
 
 ## 9. Configuration
 
@@ -490,17 +582,45 @@ environment variables (highest). The YAML file is `/etc/opspilot/central.yaml`
 (override with `OPSPILOT_CONFIG`); a missing file is not an error, and environment
 variables always override YAML (see §23).
 
-Environment variables: `OPSPILOT_ENV`, `OPSPILOT_HTTP_HOST`/`PORT`,
+Environment variables: `OPSPILOT_CONFIG`, `OPSPILOT_ENV`,
+`OPSPILOT_HTTP_HOST`/`PORT`,
 `OPSPILOT_DB_HOST`/`PORT`/`USER`/`PASSWORD`/`NAME`/`SSLMODE`,
 `OPSPILOT_LOG_LEVEL`, `OPSPILOT_AUTH_SERVER_SECRET`
 (default `dev-only-secret-change-me`), `OPSPILOT_OPERATOR_TOKEN`
 (default `dev-operator-token-change-me`), `OPSPILOT_COMMAND_LEASE_TTL_SECONDS`
 (default `60`).
 
-Agent — YAML (`configs/agent.example.yaml`):
+MCP: `OPSPILOT_MCP_MODE` (`inventory` default | `investigate` | `operate`),
+`OPSPILOT_MCP_EXECUTION_TIMEOUT_SECONDS` (default `300`), and the deprecated
+`OPSPILOT_MCP_READ_ONLY` alias (`true → inventory`, `false → operate`; an
+explicit mode always wins).
+
+Alerts: `OPSPILOT_ALERTS_ENABLED` (default `false`),
+`OPSPILOT_ALERTS_INTERVAL_SECONDS` (default `60`), and per rule
+`OPSPILOT_ALERTS_AGENT_OFFLINE_ENABLED` / `_SEVERITY` (default `critical`) /
+`_MAX_OFFLINE_SECONDS` (default `300`),
+`OPSPILOT_ALERTS_DISK_USAGE_ENABLED` / `_SEVERITY` (default `warning`) /
+`_THRESHOLD_PERCENT` (default `90`),
+`OPSPILOT_ALERTS_HEALTH_REPORT_STALE_ENABLED` / `_SEVERITY` /
+`_MAX_REPORT_AGE_SECONDS` (default `600`),
+`OPSPILOT_ALERTS_PROJECT_UNHEALTHY_ENABLED` / `_SEVERITY`.
+
+Webhooks: `OPSPILOT_WEBHOOK_ENABLED` (default `false`), `OPSPILOT_WEBHOOK_URL`,
+`OPSPILOT_WEBHOOK_SECRET`, `OPSPILOT_WEBHOOK_TIMEOUT_SECONDS` (default `5`).
+
+Every environment variable has a YAML counterpart in the same file
+(`server.*`, `database.*`, `logger.*`, `auth.*`, `commands.*`, `mcp.*`,
+`alerts.*`, `webhook.*`); see §23.
+
+Agent — YAML, path from `OPSPILOT_AGENT_CONFIG` (default `agent.yaml`); see
+`configs/agent.example.yaml`:
 `central_url`, `registration_token`, `secret`, `signing_key`, `version`,
-`server{hostname,environment}`, `agent_id`, `poll_interval`,
+`server{hostname,environment}`, `agent_id`, `sse_enabled` (default `true`),
+`poll_interval` (default `30`), `health_report_interval` (default `60`,
+`0` disables the loop),
 `execution_policy{enabled,timeout,allowed_commands,denied_commands,working_directory}`,
+`allow_insecure_central`, `filesystem.allow_absolute_paths`,
+`http_check{allow_endpoints,allow_hosts,allow_cidrs,allow_private}`,
 and the optional `projects` section (see §15).
 
 ## 10. Project structure
@@ -508,21 +628,33 @@ and the optional `projects` section (see §15).
 ```
 cmd/central/            central binary (HTTP server + token CLI)
 cmd/central/token/      registration token CLI subcommands
-cmd/agent/              agent binary
+cmd/agent/              agent binary (tool registration)
+cmd/mcp/                MCP stdio server binary
+cmd/migrate/            standalone migration CLI (up / status)
 gen/postgresql/         sqlc-generated query code (checked in)
 internal/
-  agent/                agent runtime, registry, executor, policy, tools
-  application/          use cases: agent, command, capability
+  agent/                agent runtime, registry, executor, policy, health
+                        collector, SSE listener, tools/, workflow/, deploy/,
+                        project/
+  agentsign/            shared HMAC request-signing contract
+  application/          use cases: agent, command, capability, alert, health,
+                        inventory, dispatch
   bootstrap/            central composition root, lifecycle
   domain/               entities: agent, server, command, registrationtoken
   infrastructure/
     postgres/           pool factory + repositories
     security/           HMAC and Argon2id hashers
-  transport/http/       router, handlers, DTOs
-pkg/config/             env-based config
+    webhook/            signed outbound alert webhook delivery
+  mcp/                  MCP protocol, server, tools/
+  migration/            embedded migration runner + storage
+  notify/               in-memory agent notifier (SSE wake-ups)
+  transport/http/       router, middleware, handlers, DTOs, SSE
+pkg/config/             YAML + env config (central and mcp)
 pkg/logger/             zap logger
-sql/migrations/         0001..0011 (+ embed.go)
+pkg/version/            Central / MCP version constants
+sql/migrations/         0001..0014 (+ embed.go)
 sql/queries/            annotated SQL for sqlc
+scripts/                install / uninstall / installer tests
 deployments/            docker-compose (PostgreSQL 16)
 docs/                   architecture, implementation, roadmap, adr/
 ```
@@ -540,23 +672,39 @@ docs/                   architecture, implementation, roadmap, adr/
   state is re-checked in SQL but the read is an extra round-trip.
 - Migrations are embedded in the binary and run automatically at startup
   (§22); there is no down/rollback support.
+- **`scripts/uninstall-agent.sh` still posts an unsigned
+  `{"agent_id","secret"}` body to `POST /api/v1/agents/unregister`, but that
+  route is behind the `AgentAuth` HMAC middleware (§8), so central answers
+  `401 invalid_signature`.** The script treats that as a soft failure and asks
+  `Continue uninstall? (Y/n)`, so the host is still cleaned up — but the agent
+  is left `online` in central and must be unregistered manually. Fixing the
+  script to sign the request (as `scripts/install.sh` already does in
+  `sign_agent_request`) is open work.
+- The SSE notifier is in-memory, so wake-ups only reach agents connected to the
+  same central process; multi-instance central would need PostgreSQL
+  `LISTEN`/`NOTIFY`. Polling remains correct either way.
 - `docs/implementation.md` is maintained manually alongside the code.
 
 ## 12. Not Implemented
 
 - `cmd/agent` WebSocket and the shared `pkg/protocol` package
 - Telegram; Hermes runtime; DeepSeek/AI client
-- Middleware (auth, logging, recovery) — handlers authenticate explicitly
-- Registration-token admin endpoints (`Create`/`Revoke` exist in the
-  repository but are not exposed over HTTP)
-- Command results query / history API; capability and agent listing endpoints
-- Audit and alert tables/domains
+- Registration-token admin endpoints — the token CLI (§24) is the only
+  supported interface; `Create`/`Revoke` are not exposed over HTTP
+- Command **history** listing over HTTP (`GET /api/v1/commands/{id}` returns a
+  single command; the fleet-wide list exists only as an MCP tool)
+- Capability listing endpoint over HTTP
 - Additional tools (Docker SDK); tool sandboxing; tool version matrix
-- The `deploy.project` (and `diagnose.project`/`restart.project`) tool that
-  wires the Project Profiles and workflow engine (§15, §16) into the registry
-  and command pipeline
+- A `restart.project` tool (`deploy.project` and `workflow.deploy` are
+  implemented, §16 and §28)
+- MCP tools `workflow_rollback`, `workflow_backup`, `workflow_upgrade` — the
+  underlying workflows do not exist
+- Alert resolve/acknowledge through MCP (acknowledge is an operator API action
+  only)
+- Multi-instance central wake-ups (PostgreSQL `LISTEN`/`NOTIFY` or a broker)
 - Token rotation; metrics and observability beyond zap logs
 - Migration `down`/rollback support (`cmd/migrate` only has `up` and `status`)
+- Central uninstall script
 
 ## 13. Confirmation enforcement
 
@@ -611,15 +759,20 @@ docs/                   architecture, implementation, roadmap, adr/
 ## 15. Project Profiles
 
 - **Purpose**: the configuration layer describing deployable projects on an
-  agent. This feature is configuration and discovery only — no workflow, no
-  tool execution, no deploy/restart/diagnose implementation. Future features
-  (`deploy.project`, `diagnose.project`, `restart.project`) will consume the
-  profiles.
+  agent. The `project` package itself is configuration and discovery only — it
+  never executes tools, runs workflows, or touches the registry. The tools that
+  consume the profiles (`deploy.project`, `workflow.deploy`,
+  `workflow.diagnose`, `file.read`, `filesystem.list`) live outside it (§28).
+  A `restart.project` tool is still unimplemented (§12).
 - **Configuration**: an optional `projects` section in the agent YAML (see
-  §9). Each entry has `name`, `repository` (absolute path), optional
-  `health_url`, and a `tools` map. A tool reference names a registered tool
-  via the `tool` key; every other key in the entry is a tool parameter, kept
-  as arbitrary JSON. Example:
+  §9). Each entry has `name` and a repository path — `repository` or its alias
+  `path` — plus an optional health URL (flat `health_url` or nested
+  `health.url`), an optional `deploy` block, and an optional `tools` map. A
+  tool reference names a registered tool via the `tool` key; every other key in
+  the entry is a tool parameter, kept as arbitrary JSON. The `deploy` block
+  selects a strategy via `type` (`docker-compose` → `compose_file`, `pm2` →
+  `process`, `script` → `script`) and is consumed by `deploy.project` (§28).
+  Example:
 
   ```yaml
   projects:
@@ -636,9 +789,13 @@ docs/                   architecture, implementation, roadmap, adr/
   ```
 
 - **Package** (`internal/agent/project/`): `profile.go` defines `Project`
-  (`Name`, `Repository`, `HealthURL *string`, `Tools map[string]ToolReference`)
+  (`Name`, `Repository`, `HealthURL *string`, `Deploy *DeployConfig`,
+  `Tools map[string]ToolReference`)
   and `ToolReference` (`Tool`, `Parameters json.RawMessage`). `config.go`
-  defines the YAML shape (`Config`, `ToolConfig`); the tool parameters use a
+  defines the YAML shape (`Config`, `HealthConfig`, `DeployConfig`,
+  `ToolConfig`) and the strategy identifiers
+  (`StrategyDockerCompose`, `StrategyPM2`, `StrategyScript`);
+  the tool parameters use a
   yaml `,inline` map so they round-trip through the agent config's `Save`.
   `loader.go` provides `New(cfgs) (*Loader, error)`, `Projects() []Project`
   (copy, configuration order), and `FindProject(name) (Project, bool)`.
@@ -650,8 +807,14 @@ docs/                   architecture, implementation, roadmap, adr/
   config was constructed directly).
 - **Validation**: unique project names (`duplicate project name: <name>`);
   absolute repository path (`filepath.IsAbs`); valid health URL when provided
-  (`http`/`https` with a host); the `restart` tool reference exists; the
-  `logs` tool reference exists; each tool reference names a tool. Tool
+  (`http`/`https` with a host); each tool reference names a tool. When a
+  `deploy` block is present, `deploy.type` is required and the strategy's own
+  field must be set (`compose_file` / `process` / `script`); an **unknown**
+  type passes the loader and is resolved by the strategy registry at deploy
+  time, so a new strategy needs no loader change. When there is **no** `deploy`
+  block the project falls back to the legacy tool pair and both a `restart` and
+  a `logs` tool reference are required (`missing restart tool` /
+  `missing logs tool`). Tool
   **parameter schemas are not validated** here — that remains the existing
   JSON Schema validation framework's responsibility, and the registered tools
   are not consulted during loading.
@@ -697,8 +860,9 @@ docs/                   architecture, implementation, roadmap, adr/
   `{"repository":"<project.repository>"}`; step 2 is `project.Tools["restart"]`
   copied exactly as stored (parameters unmodified); step 3 is `http.check`
   with `{"url":"<health_url>"}`, included only when the project has a
-  `health_url`. The workflow is named `deploy`. The `deploy.project` tool that
-  wires this into the registry is **not** implemented (§12).
+  `health_url`. The workflow is named `deploy`. It is wired into the registry
+  by the `workflow.deploy` tool (§28); the separate strategy-based
+  `deploy.project` tool (§28) is the other deployment entry point.
 - **Diagnose workflow** (`BuildDiagnoseWorkflow(p)`): builds the dynamic
   diagnostic workflow for a project — it gathers operational data only (no AI
   analysis). Always `system.cpu`, `system.memory`, `system.disk`,
@@ -710,8 +874,8 @@ docs/                   architecture, implementation, roadmap, adr/
   (`project.Tools["logs"]`) exactly as stored when a logs tool exists, and
   finally `http.check` with `{"url":"<health_url>"}` when a `health_url` is
   configured. The workflow is named `diagnose` and is executed with
-  `StopOnFailure(false)`. The `diagnose.project` tool that wires this into the
-  registry is **not** implemented (§12).
+  `StopOnFailure(false)`. It is wired into the registry by the
+  `workflow.diagnose` tool (§28).
 - **Project integration**: the executor operates on a `project.Project`
   produced by the Project Loader (§15); it never reads YAML directly.
 - **Confirmation**: no approval handling is implemented — a workflow assumes
@@ -780,7 +944,11 @@ docs/                   architecture, implementation, roadmap, adr/
   `After=network-online.target` + `Wants=network-online.target`,
   `ExecStart=/usr/local/bin/opspilot-agent`, `Restart=always`, `RestartSec=5`,
   `User=opspilot`, `Group=opspilot`, `WorkingDirectory=/etc/opspilot`,
-  `WantedBy=multi-user.target`. The service is started via
+  `WantedBy=multi-user.target`, plus the hardening subset
+  `NoNewPrivileges=true` and `PrivateTmp=true`. The full
+  `ProtectSystem=strict` / `ProtectHome` set that central uses is deliberately
+  **not** applied: the agent must write project repositories and reach the
+  Docker/PM2 sockets. The service is started via
   `systemctl daemon-reload; enable; start`.
 - **Verification**: after `start`, the installer signs each agent request with
   the persisted `signing_key` (HMAC-SHA256 over the canonical
@@ -819,10 +987,15 @@ docs/                   architecture, implementation, roadmap, adr/
   endpoint (`POST /api/v1/agents/unregister`) and a host-side uninstall script
   (`scripts/uninstall-agent.sh`). Registration, installation, and the agent
   runtime are unchanged.
-- **Authentication**: the endpoint reuses the existing agent authentication —
-  `agent_id` + `secret` verified against the stored Argon2id hash (same path as
-  heartbeat and capability sync, §8). Unknown agents return
-  `404 agent_not_found`; a secret mismatch returns `401 invalid_credentials`.
+- **Authentication**: the endpoint sits behind the same `AgentAuth` HMAC
+  request-signing middleware as heartbeat, health, lease and capability sync
+  (§8). An unsigned or badly signed request returns `401 invalid_signature`
+  before the handler runs; an unknown agent returns `404 agent_not_found`.
+
+  > **Known issue.** `scripts/uninstall-agent.sh` still sends an **unsigned**
+  > `{"agent_id","secret"}` body, so central rejects it with `401`. The script
+  > degrades gracefully (it warns and asks `Continue uninstall? (Y/n)`), but
+  > the agent stays `online` in central until unregistered manually. See §11.
 - **Success behavior** (`internal/application/agent/unregister.go` +
   `internal/infrastructure/postgres/agent_repository.go`):
   - `agents.status` transitions to `unregistered`.
@@ -926,10 +1099,12 @@ docs/                   architecture, implementation, roadmap, adr/
   `After=network-online.target` + `Wants=network-online.target`,
   `ExecStart=/usr/local/bin/opspilot-central`, `Restart=always`, `RestartSec=5`,
   `User=opspilot`, `Group=opspilot`, `WorkingDirectory=/etc/opspilot`,
-  `WantedBy=multi-user.target`. The service is started via
-  `systemctl daemon-reload; enable; start`.
+  `WantedBy=multi-user.target`, and the hardening directives
+  `NoNewPrivileges=true`, `PrivateTmp=true`, `ProtectHome=true`,
+  `ProtectSystem=strict` with `ReadWritePaths=/etc/opspilot`. The service is
+  started via `systemctl daemon-reload; enable; start`.
 - **Health check**: after starting, the installer polls
-  `http://127.0.0.1:8080/health` every second for up to 15 seconds. If healthy
+  `http://127.0.0.1:8080/healthz` every second for up to 15 seconds. If healthy
   it prints success; if not it prints a warning. A failed health check never
   fails the installation.
 - **PostgreSQL verification**: the installer only checks whether `psql` is
@@ -958,34 +1133,35 @@ docs/                   architecture, implementation, roadmap, adr/
   `/releases/latest/download/<asset>` URLs.
 - **Trigger** (`.github/workflows/release.yml`): runs only on
   `push: tags: - "v*"`.
-- **Targets**: exactly `cmd/agent` and `cmd/central`, for
+- **Targets**: `cmd/agent`, `cmd/central` and `cmd/mcp`, for
   `linux-amd64` and `linux-arm64`.
 - **Build**: `CGO_ENABLED=0`, `GOOS=linux`, `GOARCH=amd64|arm64`,
   `-trimpath`, `-ldflags="-s -w"`; the Go toolchain version comes from the
   repository's `go.mod` (`go-version-file`).
-- **Produced assets** (four, published per tag):
+- **Produced assets** (six, published per tag):
   `opspilot-agent-linux-amd64`, `opspilot-agent-linux-arm64`,
-  `opspilot-central-linux-amd64`, `opspilot-central-linux-arm64`.
+  `opspilot-central-linux-amd64`, `opspilot-central-linux-arm64`,
+  `opspilot-mcp-linux-amd64`, `opspilot-mcp-linux-arm64`.
 - **Verification before upload**: each built binary is checked to be
   executable (`test -x`) and non-empty (`test -s`); a missing or invalid
   binary fails the job and therefore the workflow.
 - **Two jobs**:
-  - **`build`** (matrix `agent`/`central` × `amd64`/`arm64`): builds and
+  - **`build`** (matrix `agent`/`central`/`mcp` × `amd64`/`arm64`): builds and
     verifies each binary exactly as above, then uploads it to the workflow run
     with `actions/upload-artifact@v4` (`if-no-files-found: error`). Nothing is
     uploaded to GitHub Releases from this job.
   - **`release`** (`needs: build`): downloads all artifacts with
     `actions/download-artifact@v4` (`merge-multiple`), then
     `softprops/action-gh-release@v2` creates the Release for the pushed tag if
-    it does not exist (or reuses the existing one) and uploads all four
+    it does not exist (or reuses the existing one) and uploads all six
     binaries in a single step. `overwrite: true` replaces assets on a re-run,
     so the workflow works whether or not the Release already exists.
 - **Permissions**: uses the built-in `GITHUB_TOKEN` (`contents: write` — the
   minimum permission) in both jobs; no custom token and no source archives.
 - **No application code**: the pipeline does not modify the Agent, Central,
   Tool Registry, Workflow Engine, installers, database, or HTTP API.
-- **Verification**: `GOOS=linux GOARCH=amd64|arm64 go build ./cmd/agent` and
-  `./cmd/central` all pass locally, producing statically linked, stripped ELF
+- **Verification**: `GOOS=linux GOARCH=amd64|arm64 go build ./cmd/agent`, `./cmd/central` and
+  `./cmd/mcp` all pass locally, producing statically linked, stripped ELF
   binaries whose names match the installer asset expectations.
 
 ## 22. Embedded migration framework
@@ -1001,7 +1177,7 @@ docs/                   architecture, implementation, roadmap, adr/
   it does not exist (`version TEXT PRIMARY KEY`,
   `applied_at TIMESTAMPTZ NOT NULL DEFAULT now()`).
 - **Ordering**: migrations run in lexicographical file-name order
-  (`0001_… < 0002_… < … < 0010_…`), so the numbering defines the sequence.
+  (`0001_… < 0002_… < … < 0014_…`), so the numbering defines the sequence.
 - **Execution**: each migration runs inside its own transaction
   (`internal/migration/storage.go` — `Storage.apply`). The version is recorded
   in `schema_migrations` in the same transaction, so a failure rolls back both
@@ -1031,7 +1207,7 @@ docs/                   architecture, implementation, roadmap, adr/
   partially migrated, already up-to-date, failed-migration rollback (the failed
   version is never recorded and its partial DDL is rolled back), `schema_migrations`
   creation/columns, lexicographical ordering (a migration that depends on the
-  previous one succeeds only if order is respected), embedded loading (10 files,
+  previous one succeeds only if order is respected), embedded loading (all migration files,
   sorted, non-empty), and `status`. `gofmt`, `go build`, `go vet`, `go test ./...`,
   `GOOS=linux go build ./...`, and `GOOS=linux go vet ./...` all pass.
 
@@ -1156,3 +1332,212 @@ covers `List` ordering, nullable `environment`, `revoked_at`, and that revoke
 does not delete rows. `gofmt`, `go build ./...`, `go vet ./...`,
 `go test ./...`, `GOOS=linux go build ./...`, and `GOOS=linux go vet ./...`
 all pass.
+
+## 25. Operator authentication and the command audit trail
+
+- **Middleware** (`internal/transport/http/middleware.go`): `Recovery` (panic →
+  500), `MaxBodyBytes` (request body limit), `OperatorAuth` (constant-time
+  bearer-token compare) and `ActorIdentity` (`X-Operator-Actor`). Agent routes
+  additionally chain `AgentAuth` (§8). The router (`router.go`) is the single
+  place that decides which chain a route gets; handlers no longer authenticate
+  themselves.
+- **Actor header**: every operator route requires `X-Operator-Actor` (1–128
+  characters, control characters rejected). It runs **after** `OperatorAuth`, so
+  it can never grant access on its own. The actor is persisted on the affected
+  record, making approval and acknowledge chains attributable.
+- **Audit columns** (`sql/migrations/0012_command_audit.sql`): every command
+  records `source` (`api` | `mcp` | `system`), `requested_by` and `requested_at`
+  at creation. They are immutable. `approved_by`, `approved_at` and the optional
+  `approval_note` are written exactly once, at the `pending → approved`
+  transition, and only by `POST /api/v1/commands/approve`.
+- **MCP never self-approves**: commands created through the MCP dispatch path are
+  recorded as `source = mcp` and always stay `confirmation_status = pending`,
+  even for tools whose capability metadata would otherwise auto-approve. An
+  independent operator must approve them.
+- **Fail-closed capability resolution** at creation: `capability_not_found`
+  (400) when the tool has no capability row for the agent,
+  `capability_unavailable` (409) when the registered capability is disabled. No
+  command row is written in either case.
+
+## 26. Agent health reporting
+
+- **Collector** (`internal/agent/health.go`): `HealthCollector` reuses the
+  registered `system.cpu` / `system.memory` / `system.disk` tools and — for
+  projects with a health URL — the SSRF-hardened `http.check` tool, so a report
+  can never disagree with what the tools actually measure. A failed or
+  unavailable metric downgrades the report to `status: degraded` instead of
+  failing it, so one broken metric never hides the rest.
+- **Report body**: `agent_id`, `reported_at`, `agent_version`, `hostname`,
+  `environment`, `status`, `cpu_user_percent`, `cpu_system_percent`,
+  `cpu_idle_percent`, `memory_used_percent`, `disk_used_percent`, and an
+  optional `project_health` object (`project`, `healthy`, `url`, `status_code`,
+  `error`) reporting the **first unhealthy** project — the most actionable
+  signal; the full per-project detail stays in the raw snapshot.
+- **Loop**: an independent goroutine on `health_report_interval` (default 60s,
+  `0` disables it), separate from the heartbeat and command-poll loops. It POSTs
+  the signed report to `/api/v1/agents/health`.
+- **Storage**: `agent_health` holds **one row per agent** — a new report
+  overwrites the previous one, so central always has the latest snapshot and no
+  history. The raw request body is persisted verbatim as `snapshot` (JSONB), so
+  nothing the agent collected is lost in the typed projection.
+- **Reading**: `GET /api/v1/health` (operator) returns the per-agent summary
+  joined with registration state (`agent_status`, `last_heartbeat`,
+  `agent_version_registered`, `server_name`, `server_hostname`). It reads
+  central state only and never contacts an agent.
+- **Safety**: the snapshot deliberately carries only operational data — no
+  secrets, no file contents, no process environments, no log tails, no HTTP
+  response bodies.
+
+## 27. Tool catalog metadata
+
+- **Purpose**: semantic metadata for AI reasoning, tool discovery, filtering and
+  documentation. It is **never** consulted for execution, approval or dispatch —
+  access control remains `ConfirmationLevel` (§13) and the execution policy (§7).
+- **Shape** (`internal/agent/metadata.go`): `ToolMetadata{Name, Description,
+  Category, Domain, Tags, Risk, RequiresConfirmation, EstimatedDuration,
+  SinceVersion}`.
+  - `Category`: `system`, `filesystem`, `docker`, `git`, `pm2`, `systemd`,
+    `network`, `database`, `http`, `workflow`, `deployment`, `diagnostics`,
+    `monitoring`.
+  - `Risk`: `read_only`, `mutating`, `destructive`.
+  - `EstimatedDuration`: `instant`, `short`, `medium`, `long` — a semantic
+    estimate, never a runtime deadline.
+- **Canonicalization**: `Registry.Register` overwrites `Name`, `Description` and
+  `RequiresConfirmation` from the tool's own methods and defaults `SinceVersion`
+  to `Version()`, so the catalog cannot drift from the executing tool.
+- **Validation**: `ToolMetadata.Validate` rejects a missing name, description or
+  category, an unknown risk, and duplicate tags. The registry runs it on every
+  registration, so invalid metadata fails at agent startup rather than silently
+  reaching the catalog.
+- **Exposure**: `Registry.ListMetadata` is the single source of truth for the
+  catalog.
+
+## 28. Registered workflow and deploy tools
+
+The workflow engine (§16) and the project profiles (§15) are wired into the tool
+registry by three registered tools (`cmd/agent/main.go`). All three are built on
+top of the `RegistryExecutor`, so every inner step still passes registry lookup →
+execution-policy gate → JSON Schema validation → tool execution.
+
+- **`workflow.diagnose`** (`internal/agent/tools/diagnose/`) —
+  `confirmation_level = none`. Runs the diagnose workflow with
+  continue-on-failure.
+- **`workflow.deploy`** (`internal/agent/tools/deploy/deploy.go`) —
+  `confirmation_level = required`. Runs the git.pull → restart → optional
+  http.check deploy workflow for a configured project.
+- **`deploy.project`** (`internal/agent/tools/deploy/project.go`) —
+  `confirmation_level = required`, schema
+  `{"required":["project"],"properties":{"project":{"type":"string"}}}`. It
+  resolves the project's `deploy` block and executes the matching **strategy**;
+  it never switches on strategy types itself — the registry
+  (`internal/agent/deploy/`) performs the lookup by `deploy.type`.
+- **Deploy strategies** (`internal/agent/deploy/`): `docker_compose.go`
+  (`docker-compose`, needs `compose_file`), `pm2.go` (`pm2`, needs `process`),
+  `script.go` (`script`, needs `script`), registered into
+  `deploy.NewRegistry()` at startup. A new strategy is added by registering it —
+  no loader or tool change is required (§15).
+
+## 29. SSE command wake-ups
+
+- **Endpoint**: `GET /api/v1/agents/events` (`internal/transport/http/events.go`),
+  behind the same `AgentAuth` HMAC middleware as every other agent route. It is
+  registered only when the router is built with an event handler.
+- **Payload**: wake-up only — `{"agent_id": …, "reason": "command_available"}`
+  on `event: wakeup`. Command payloads, secrets, approval decisions and results
+  are **never** sent over SSE; the agent always fetches work from the signed
+  `POST /api/v1/commands/lease`, which remains the source of truth. A lost,
+  duplicated or reordered wake-up is therefore harmless.
+- **Keepalive and timeouts**: a heartbeat frame every 15s
+  (`sseHeartbeatInterval`). Central's global HTTP write timeout is cleared for
+  this handler only via `http.NewResponseController` and re-armed as a 30s
+  per-write deadline (`ssePerWriteTimeout`); other endpoints keep their timeout.
+- **Notifier** (`internal/notify/`): in-memory, one active subscription per
+  agent. A reconnecting agent replaces its previous stream (the old one is
+  cancelled), so duplicates can never double-deliver. The wake channel is
+  buffered with capacity one, so concurrent notifications coalesce.
+- **Wiring**: central notifies from the command application layer, so both the
+  HTTP API and the in-process MCP dispatch path trigger wake-ups. MCP-created
+  commands are `pending` and never wake an agent at creation; **approving** a
+  pending command wakes the target agent.
+- **Agent side** (`internal/agent/sse_listener.go`): reconnects with exponential
+  backoff (1s initial, 30s max, ±30% jitter, reset to 1s after 60s stable) and
+  signals a poll after every disconnect, so no command is delayed.
+- **Polling stays the fallback**: `poll_interval` (default 30s) covers startup,
+  disconnects and a central without the SSE handler. With `sse_enabled: false`,
+  polling is the only delivery path — lower the interval to 2–5s.
+- **Single-process scope**: the notifier lives in one process, so wake-ups only
+  reach agents streaming from the same central instance. Multi-instance central
+  would need PostgreSQL `LISTEN`/`NOTIFY` or a broker (§12); polling remains
+  correct regardless.
+
+## 30. Alerts and outbound webhooks
+
+- **Evaluator** (`internal/application/alert/evaluator.go`): a background loop in
+  central (`OPSPILOT_ALERTS_INTERVAL_SECONDS`, default 60s) that walks every
+  agent together with its latest health report and applies the configured rules.
+  The whole subsystem is **disabled by default** (`OPSPILOT_ALERTS_ENABLED`), and
+  each rule is inert unless it is enabled with a non-zero threshold.
+- **Rules**:
+  - `agent_offline` — last heartbeat older than `max_offline_seconds` (default
+    severity `critical`).
+  - `disk_usage` — latest report `disk_used_percent` above `threshold_percent`.
+  - `health_report_stale` — last health report older than
+    `max_report_age_seconds` while the agent is still online.
+  - `project_unhealthy` — parses `project_health` out of the raw snapshot and
+    fires when a configured probe reports unhealthy.
+- **Idempotency**: a partial unique index enforces at most one `open` alert per
+  `(agent_id, rule_type)`. A repeated unhealthy report advances `last_seen_at`
+  and preserves `first_seen_at` instead of opening a duplicate; recovery resolves
+  both `open` and `acknowledged` alerts, and the next unhealthy report opens a
+  fresh one.
+- **Lifecycle**: `open → acknowledged → resolved`, or `open → resolved`.
+  Acknowledging is an authenticated operator API action
+  (`POST /api/v1/alerts/{id}/acknowledge`, actor recorded in
+  `acknowledged_by`); the MCP server has no acknowledge or resolve tool.
+- **Webhooks** (`internal/infrastructure/webhook/`): disabled by default, HTTPS
+  required in production, each raw payload signed with HMAC-SHA256
+  (`X-OpsPilot-Signature`) and carrying an event id (`X-OpsPilot-Event-ID`) so a
+  receiver can deduplicate. At most three attempts with backoff, the body is
+  bounded to 1 MiB, and response bodies are never logged. Only state
+  **transitions** emit an event (open, acknowledge, resolve) — not every
+  evaluation sweep.
+
+## 31. MCP server
+
+- **Binary** (`cmd/mcp`): a standalone MCP stdio server. It is an adapter only —
+  it holds no business logic and never calls the Central REST API; it wires the
+  same application use cases directly against PostgreSQL. It must run under a
+  least-privilege database role (SELECT on the platform tables, INSERT into
+  `commands`) — never a superuser or the schema owner.
+- **Protocol** (`internal/mcp/`): `protocol.go` (JSON-RPC framing), `server.go`
+  (`initialize`, `tools/list`, `tools/call`), `tool.go` (`Tool` / `ToolSet`),
+  `health.go`, `error.go`. The protocol revision is `2025-03-26`; the server
+  echoes the client's requested version when it sends one. `serverInfo.version`
+  comes from `pkg/version.MCP`.
+- **Modes** (`internal/mcp/tools/build.go`, gated by `OPSPILOT_MCP_MODE`,
+  validated by `pkg/config`). Modes are strictly cumulative and default to the
+  most restrictive tier:
+  - **`inventory`** (default) — pure reads of central state, never contacts an
+    agent: `ping`, `list_servers`, `list_agents`, `list_commands`,
+    `get_command`, `get_agent_health`, `list_agent_health`,
+    `list_unhealthy_agents`, `list_alerts`, `get_alert`.
+  - **`investigate`** — adds twelve read-only tools that dispatch bounded agent
+    commands: `file_read`, `filesystem_list`, `docker_inspect`,
+    `workflow_diagnose`, `pm2_list`, `pm2_logs`, `docker_list`, `docker_logs`,
+    `journal_logs`, `git_status`, `git_current_commit`, `git_branch`.
+  - **`operate`** — adds `workflow_deploy`, the only mutating tool. It still
+    goes through the normal command pipeline and always requires an independent
+    operator approval.
+  An unknown mode `panic`s at build time rather than silently exposing a tool
+  set. The deprecated `OPSPILOT_MCP_READ_ONLY` alias maps `true → inventory` and
+  `false → operate`; an explicit mode always wins.
+- **Safety properties**: the `lines` argument of every log tool is bounded to
+  1–1000 (default 100) in the MCP schema, mirroring the agent-side bounds, so no
+  arbitrary flags or shell syntax can reach an agent. Repository paths are
+  relayed to the agent's own validated input model — the MCP layer adds no path
+  handling of its own. `pm2.restart`, `docker.restart`, `systemctl.restart`,
+  `git.pull` and `deploy.project` are deliberately absent from every tier. A
+  missing or disabled agent capability surfaces as a machine-readable
+  `capability_not_found` / `capability_unavailable` tool error through the
+  fail-closed command-creation path (§25); one agent missing a tool never
+  affects calls to other agents.

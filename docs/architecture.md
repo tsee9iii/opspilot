@@ -30,27 +30,35 @@ flowchart LR
 
 ```
 cmd/
-  central/            central binary entrypoint
-  agent/              agent binary entrypoint
+  central/            central binary entrypoint (+ token CLI subcommands)
+  agent/              agent binary entrypoint (tool registration)
   mcp/                MCP stdio server entrypoint
+  migrate/            standalone migration CLI (up / status)
 internal/
   bootstrap/          central composition root, lifecycle, graceful shutdown
-  transport/http/     HTTP handlers, DTOs, routing (central)
-  application/        use cases (agent, command, capability, health, alert)
+  transport/http/     HTTP handlers, DTOs, routing, middleware, SSE (central)
+  application/        use cases (agent, command, capability, health, alert,
+                      inventory, dispatch)
   domain/             entities (agent, server, command, registrationtoken)
   infrastructure/
     postgres/         sqlc-backed repositories, pgx pool
     security/         HMAC (tokens) and Argon2id (secrets) hashers
     webhook/          outbound signed webhook delivery (alerts)
-  agent/              agent runtime, tool registry, executor, policy, health collector
-  mcp/tools/          MCP tool definitions and mode-gated toolset builder
+  agentsign/          shared HMAC request-signing contract (agent ↔ central)
+  notify/             in-memory agent notifier behind the SSE wake-ups
+  migration/          embedded migration runner and storage
+  agent/              agent runtime, tool registry, executor, policy,
+                      health collector, tools/, workflow/, deploy/, project/
+  mcp/                MCP protocol, server, and tools/ (mode-gated toolset)
 pkg/
-  config/             env-based configuration
+  config/             YAML + env configuration (central and mcp)
   logger/             zap logger
+  version/            single source of truth for Central / MCP versions
 gen/postgresql/       sqlc-generated query code (checked in)
 sql/
-  migrations/         0001..0014 schema migrations
+  migrations/         0001..0014 schema migrations (embedded via embed.go)
   queries/            annotated SQL consumed by sqlc
+scripts/              install / uninstall / installer test scripts
 ```
 
 ## Central
@@ -81,21 +89,33 @@ flowchart TB
 
 ### HTTP API
 
+Auth column: **—** is unauthenticated, **token** is a one-time registration
+token in the body, **signed** is an HMAC-signed agent request
+(`X-Agent-Id` / `X-Agent-Timestamp` / `X-Agent-Nonce` / `X-Agent-Signature`),
+**operator** is the operator bearer token plus the `X-Operator-Actor` header.
+
 | Method | Path                    | Auth        | Success response |
 | ------ | ----------------------- | ----------- | ---------------- |
 | GET    | `/healthz`              | —           | `200 ok`         |
-| POST   | `/api/v1/agents/register` | token      | `201 {agent_id, status}` |
-| POST   | `/api/v1/agents/heartbeat` | agent_id+secret | `200 {status, next_heartbeat}` |
-| POST   | `/api/v1/agents/health` | agent_id+secret | `200 {status}` |
+| POST   | `/api/v1/agents/register` | token      | `201 {agent_id, status, signing_key}` |
+| POST   | `/api/v1/agents/heartbeat` | signed   | `200 {status, next_heartbeat}` |
+| POST   | `/api/v1/agents/health` | signed      | `200 {status}` |
+| POST   | `/api/v1/agents/unregister` | signed  | `200 {status}` |
+| GET    | `/api/v1/agents/events` | signed      | `200 text/event-stream` (SSE wake-ups) |
 | POST   | `/api/v1/commands`      | operator    | `201 {command_id, status}` |
+| GET    | `/api/v1/commands/{id}` | operator    | `200 {command}` |
 | POST   | `/api/v1/commands/approve` | operator | `200 {command_id, status}` |
-| POST   | `/api/v1/commands/lease` | —          | `200 {command_id, tool, payload}` or `204` |
-| POST   | `/api/v1/commands/start` | —          | `200 {command_id, status}` |
-| POST   | `/api/v1/commands/complete` | —        | `200 {command_id, status}` |
-| POST   | `/api/v1/commands/fail` | —           | `200 {command_id, status}` |
-| POST   | `/api/v1/capabilities`  | agent_id+secret | `200 {status, count}` |
+| POST   | `/api/v1/commands/lease` | signed     | `200 {command_id, tool, payload}` or `204` |
+| POST   | `/api/v1/commands/start` | signed     | `200 {command_id, status}` |
+| POST   | `/api/v1/commands/complete` | signed  | `200 {command_id, status}` |
+| POST   | `/api/v1/commands/fail` | signed      | `200 {command_id, status}` |
+| POST   | `/api/v1/capabilities`  | signed      | `200 {status, count}` |
+| GET    | `/api/v1/health`        | operator    | `200 {agents}` |
 | GET    | `/api/v1/alerts`        | operator    | `200 {alerts, total}` |
 | POST   | `/api/v1/alerts/{id}/acknowledge` | operator | `200 {alert}` |
+
+The SSE endpoint is registered only when the router is built with an event
+handler; the test router omits it.
 
 Errors use a consistent envelope: `{"error":{"code","message"}}`. Command transition endpoints enforce ownership and state: `404 not_found`, `403 command_not_owned`, `409 invalid_transition`. Creating a command requires the operator bearer token (`operatorAuth` middleware, constant-time compare; failures return `401` without leaking whether a token was valid). Every operator route also requires the `X-Operator-Actor` header (1–128 chars, control chars rejected) so each audit record names the human or system that acted. Capability failures surface as `400 capability_not_found` when a tool has no registered capability and `409 capability_unavailable` when a registered capability is disabled — the command is never created.
 
@@ -141,9 +161,10 @@ erDiagram
     agents {
         uuid id PK
         uuid server_id FK
-        text secret "Argon2id hash"
+        text secret "Argon2id hash, legacy"
+        text signing_key "per-agent HMAC key"
         text version
-        text status
+        text status "online|offline|unregistered"
         timestamptz last_heartbeat
     }
     commands {
@@ -187,11 +208,11 @@ erDiagram
         text agent_version
         text hostname
         text environment
-        numeric cpu_user_percent
-        numeric cpu_system_percent
-        numeric cpu_idle_percent
-        numeric memory_used_percent
-        numeric disk_used_percent
+        float8 cpu_user_percent
+        float8 cpu_system_percent
+        float8 cpu_idle_percent
+        float8 memory_used_percent
+        float8 disk_used_percent
         jsonb snapshot "raw report, verbatim"
     }
     alerts {
@@ -213,13 +234,13 @@ erDiagram
 ### Security
 
 - **Registration tokens**: a one-time token is stored as `HMAC-SHA256(OPSPILOT_AUTH_SERVER_SECRET, token)` (hex). Registration consumes it atomically; replay returns `409 token_already_used`.
-- **Agent secrets**: plaintext secrets are never stored. Registration persists an Argon2id hash; heartbeat and capability sync verify against it.
+- **Agent request signing**: registration returns a per-agent `signing_key` once. Every later agent request is HMAC-SHA256 signed over `agent_id \n timestamp \n nonce \n method \n path \n body` (shared `internal/agentsign` contract) and verified constant-time by the `AgentAuth` middleware, which also rejects stale timestamps (`expired_timestamp`) and replayed nonces (`replay_detected`). The Argon2id hash of the registration-time `secret` is still persisted (`agents.secret`) but is no longer verified per request.
 - **Fail-closed configuration**: central refuses to start with development defaults (`OPSPILOT_AUTH_SERVER_SECRET` / `OPSPILOT_OPERATOR_TOKEN` / `OPSPILOT_DB_PASSWORD` unset), with `sslmode=disable`, or binding `0.0.0.0` in production. Validation errors name the offending variable but never its value.
 - **Operator-authenticated command creation**: `POST /api/v1/commands` requires the operator bearer token so only authenticated operators can enqueue commands.
 - **Fail-closed capability resolution**: a command for a tool with no registered capability is rejected (`capability_not_found`); a command for a registered-but-disabled capability is rejected (`capability_unavailable`). Capabilities are never implicitly approved.
 - **MCP modes**: the MCP toolset is built from a mode that defaults to `inventory` and only ever grows. `inventory` exposes pure reads over PostgreSQL (ping, inventory, health, alerts) and never contacts agents. `investigate` adds read-only agent tools (`file_read`, `filesystem_list`, `docker_inspect`, `workflow_diagnose`) and the remote-investigation tools (`pm2_list`, `pm2_logs`, `docker_list`, `docker_logs`, `journal_logs`, `git_status`, `git_current_commit`, `git_branch`) that are still policy-enforced. `operate` adds `workflow_deploy`; any command created through MCP is always recorded as `source=mcp` and stays pending until an operator approves it — it is never self-approved. The deprecated `OPSPILOT_MCP_READ_ONLY` flag maps `true→inventory` / `false→operate`; an explicit `mode` always wins. The MCP service should run as a least-privilege database role.
 - **Operator audit actor**: every operator-authenticated route (command create/approve, alert list/acknowledge) requires the `X-Operator-Actor` header, and the actor is persisted on the affected record so approval chains are attributable.
-- **Webhook delivery**: outbound alert webhooks are disabled by default, require HTTPS in production, sign each raw payload with HMAC-SHA256 (`X-Opspilot-Signature`), carry an event id (`X-Opspilot-Event-Id`) for idempotency, and retry at most three times with backoff. Response bodies are never logged.
+- **Webhook delivery**: outbound alert webhooks are disabled by default, require HTTPS in production, sign each raw payload with HMAC-SHA256 (`X-OpsPilot-Signature`), carry an event id (`X-OpsPilot-Event-ID`) for idempotency, and retry at most three times with backoff. Response bodies are never logged.
 
 ### Agent health reporting
 
@@ -349,11 +370,16 @@ The agent leases commands from central on an interval and on SSE wake-ups. Each 
 
 ## Configuration
 
+Central and mcp share `pkg/config`, which resolves in precedence order:
+built-in defaults → YAML file (`/etc/opspilot/central.yaml`, override with
+`OPSPILOT_CONFIG`; a missing file is not an error) → environment variables
+(always win). The agent reads its own per-agent YAML separately.
+
 | Binary   | Source                      | Keys (examples) |
 | -------- | --------------------------- | --------------- |
-| central  | env (`OPSPILOT_*`)          | `OPSPILOT_HTTP_PORT`, `OPSPILOT_DB_HOST`, `OPSPILOT_AUTH_SERVER_SECRET`, `OPSPILOT_OPERATOR_TOKEN`, `OPSPILOT_ALERTS_ENABLED`, `OPSPILOT_ALERTS_INTERVAL_SECONDS`, `OPSPILOT_ALERTS_DISK_USAGE_THRESHOLD_PERCENT` (and sibling per-rule vars), `OPSPILOT_WEBHOOK_URL` / `OPSPILOT_WEBHOOK_SECRET` |
-| agent    | YAML (`configs/agent.example.yaml`) | `central_url`, `registration_token`, `secret`, `sse_enabled`, `poll_interval`, `health_report_interval`, `execution_policy`, `allow_insecure_central`, `filesystem.allow_absolute_paths`, `http_check.*` |
-| mcp      | env (`OPSPILOT_*`)          | `OPSPILOT_DB_HOST`, `OPSPILOT_MCP_MODE` (`inventory` default, `investigate`, `operate`); deprecated `OPSPILOT_MCP_READ_ONLY` |
+| central  | YAML + env (`OPSPILOT_*`)   | `OPSPILOT_HTTP_PORT`, `OPSPILOT_DB_HOST`, `OPSPILOT_AUTH_SERVER_SECRET`, `OPSPILOT_OPERATOR_TOKEN`, `OPSPILOT_ALERTS_ENABLED`, `OPSPILOT_ALERTS_INTERVAL_SECONDS`, `OPSPILOT_ALERTS_DISK_USAGE_THRESHOLD_PERCENT` (and sibling per-rule vars), `OPSPILOT_WEBHOOK_URL` / `OPSPILOT_WEBHOOK_SECRET` |
+| agent    | YAML (`configs/agent.example.yaml`) | `central_url`, `registration_token`, `secret`, `signing_key`, `sse_enabled`, `poll_interval`, `health_report_interval`, `execution_policy`, `allow_insecure_central`, `filesystem.allow_absolute_paths`, `http_check.*`, `projects` |
+| mcp      | YAML + env (`OPSPILOT_*`)   | `OPSPILOT_DB_HOST`, `OPSPILOT_MCP_MODE` (`inventory` default, `investigate`, `operate`), `OPSPILOT_MCP_EXECUTION_TIMEOUT_SECONDS`; deprecated `OPSPILOT_MCP_READ_ONLY` |
 
 ## Installer hardening
 
