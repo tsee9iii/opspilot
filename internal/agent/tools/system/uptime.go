@@ -13,10 +13,14 @@ const (
 )
 
 // UptimeTool reports system load via /usr/bin/uptime.
-type UptimeTool struct{}
+// The command runner is injectable so result behavior can be tested without
+// depending on the host OS.
+type UptimeTool struct {
+	run func(context.Context, string, ...string) ([]byte, error)
+}
 
 func NewUptimeTool() *UptimeTool {
-	return &UptimeTool{}
+	return &UptimeTool{run: agent.RunCommand}
 }
 
 func (t *UptimeTool) Name() string {
@@ -58,5 +62,5 @@ func (t *UptimeTool) Availability(_ context.Context) (bool, string) {
 }
 
 func (t *UptimeTool) Execute(ctx context.Context, _ []byte) ([]byte, error) {
-	return agent.RunCommand(ctx, "/usr/bin/uptime")
+	return t.run(ctx, "/usr/bin/uptime")
 }

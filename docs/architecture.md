@@ -241,3 +241,10 @@ The installers (`scripts/install.sh`, `scripts/install-central.sh`) create dedic
 - **sqlc v1.31.1** generates `gen/postgresql` from `sql/queries` + `sql/migrations` (`make sqlc-generate`).
 - **Makefile** targets: `build`, `test`, `vet`, `run-central`, `run-agent`, `dev-up` (PostgreSQL via `deployments/docker-compose.yml`).
 - **Logging**: zap — console encoding in development, JSON in production.
+
+### Verification and CI
+
+- The authoritative full verification command is `go test ./...` on an unrestricted CI/Linux runner. A clean result there is the release gate; nothing is deployed without it.
+- HTTP integration tests use `httptest.NewServer`, which binds a loopback port. In a restricted sandbox that blocks loopback networking these tests fail for **environment reasons, not code reasons** — rerun them on an unrestricted runner before treating a failure as a regression.
+- PostgreSQL-backed integration tests read `OPSPILOT_TEST_DATABASE_URL` (default `postgres://opspilot:opspilot@localhost:5432/opspilot?sslmode=disable`) and skip themselves when the database is unreachable. CI provisions a PostgreSQL service, so these tests run for real there.
+- CI runs on Ubuntu and executes `gofmt` validation, `go vet ./...`, and `go test ./...` (see `.github/workflows/ci.yml`). CI must pass before production deployment.
