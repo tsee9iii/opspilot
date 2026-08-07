@@ -93,9 +93,11 @@ func (uc *DispatchUseCase) Dispatch(ctx context.Context, req DispatchRequest) (D
 	}
 
 	created, err := uc.create.Create(ctx, appcommand.CreateCommandRequest{
-		AgentID: req.AgentID,
-		Tool:    req.Tool,
-		Payload: req.Payload,
+		AgentID:     req.AgentID,
+		Tool:        req.Tool,
+		Payload:     req.Payload,
+		Source:      appcommand.SourceMCP,
+		RequestedBy: "hermes",
 	})
 	if err != nil {
 		return DispatchResponse{}, fmt.Errorf("dispatch: create command: %w", err)

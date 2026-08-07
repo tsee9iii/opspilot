@@ -22,8 +22,10 @@ import (
 
 	"github.com/joho/godotenv"
 
+	appalert "github.com/tsee9iii/opspilot/internal/application/alert"
 	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 	appdispatch "github.com/tsee9iii/opspilot/internal/application/dispatch"
+	apphealth "github.com/tsee9iii/opspilot/internal/application/health"
 	appinventory "github.com/tsee9iii/opspilot/internal/application/inventory"
 	"github.com/tsee9iii/opspilot/internal/infrastructure/postgres"
 	"github.com/tsee9iii/opspilot/internal/mcp"
@@ -69,6 +71,8 @@ func main() {
 	commandRepo := postgres.NewCommandRepository(pool)
 	capabilityRepo := postgres.NewCapabilityRepository(pool)
 	inventoryRepo := postgres.NewInventoryRepository(pool)
+	healthRepo := postgres.NewHealthRepository(pool)
+	alertRepo := postgres.NewAlertRepository(pool)
 
 	createUC := appcommand.NewCreateUseCase(commandRepo, capabilityRepo)
 	getUC := appcommand.NewGetCommandUseCase(commandRepo)
@@ -80,12 +84,16 @@ func main() {
 		Commands:              appinventory.NewListCommandsUseCase(inventoryRepo),
 		GetCommand:            getUC,
 		Dispatch:              dispatchUC,
+		Health:                apphealth.NewGetUseCase(healthRepo),
+		Alerts:                appalert.NewListUseCase(alertRepo),
+		GetAlert:              appalert.NewGetUseCase(alertRepo),
 		Pinger:                pool,
 		DefaultTimeoutSeconds: cfg.MCP.ExecutionTimeoutSeconds,
-		// Read-only mode (default) strips the execution tools (workflow_deploy,
-		// workflow_diagnose) from the tool set so Hermes cannot dispatch remote
-		// execution through the MCP process. It is the safe default.
-		ReadOnly: cfg.MCP.ReadOnly,
+		// Mode gates the exposed tool set: inventory (default) is pure reads of
+		// central state; investigate adds safe agent diagnostics; operate adds
+		// mutating deploy (still always requiring operator confirmation). The
+		// most restrictive tier, inventory, is the safe default.
+		Mode: cfg.MCP.Mode,
 	})
 
 	server := mcp.NewServer(toolSet, os.Stdin, os.Stdout)

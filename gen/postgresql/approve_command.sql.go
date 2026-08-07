@@ -16,23 +16,43 @@ const approveCommand = `-- name: ApproveCommand :one
 UPDATE commands
 SET confirmation_status = 'approved',
     confirmed_at = now(),
+    approved_at = now(),
+    approved_by = $1,
+    approval_note = $2,
     updated_at = now()
-WHERE id = $1
+WHERE id = $3
   AND confirmation_status = 'pending'
-RETURNING id, confirmation_status, confirmed_at
+RETURNING id, confirmation_status, confirmed_at, approved_at, approved_by
 `
+
+type ApproveCommandParams struct {
+	ApprovedBy   pgtype.Text
+	ApprovalNote pgtype.Text
+	ID           uuid.UUID
+}
 
 type ApproveCommandRow struct {
 	ID                 uuid.UUID
 	ConfirmationStatus string
 	ConfirmedAt        pgtype.Timestamptz
+	ApprovedAt         pgtype.Timestamptz
+	ApprovedBy         pgtype.Text
 }
 
 // Approve a command awaiting confirmation. Only pending-confirmation commands
 // match; a command that is already approved is a no-op handled by the caller.
-func (q *Queries) ApproveCommand(ctx context.Context, id uuid.UUID) (ApproveCommandRow, error) {
-	row := q.db.QueryRow(ctx, approveCommand, id)
+// The approval audit fields are written exactly once, at the pending -> approved
+// transition, so a duplicate approval never overwrites the original actor or
+// timestamp.
+func (q *Queries) ApproveCommand(ctx context.Context, arg ApproveCommandParams) (ApproveCommandRow, error) {
+	row := q.db.QueryRow(ctx, approveCommand, arg.ApprovedBy, arg.ApprovalNote, arg.ID)
 	var i ApproveCommandRow
-	err := row.Scan(&i.ID, &i.ConfirmationStatus, &i.ConfirmedAt)
+	err := row.Scan(
+		&i.ID,
+		&i.ConfirmationStatus,
+		&i.ConfirmedAt,
+		&i.ApprovedAt,
+		&i.ApprovedBy,
+	)
 	return i, err
 }

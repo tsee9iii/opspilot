@@ -23,11 +23,27 @@ var (
 	ErrCapabilityUnavailable = errors.New("tool is not currently available on the agent")
 )
 
+// Command origin sources. The source is immutable audit data: it records which
+// pathway created the command. 'mcp' commands are always created pending
+// confirmation and never approved by the MCP path.
+const (
+	SourceAPI    = "api"
+	SourceMCP    = "mcp"
+	SourceSystem = "system"
+)
+
 type CreateCommandRequest struct {
 	AgentID            string
 	Tool               string
 	Payload            []byte
 	ConfirmationStatus string
+	// Source is the immutable origin of the command: SourceAPI, SourceMCP or
+	// SourceSystem. An empty source defaults to SourceAPI.
+	Source string
+	// RequestedBy is the actor identifier that requested the command. For MCP
+	// commands this is the integration identity; for API commands it is the
+	// authenticated operator actor.
+	RequestedBy string
 }
 
 type CreateCommandResponse struct {
@@ -86,6 +102,15 @@ func (uc *CreateUseCase) Create(ctx context.Context, req CreateCommandRequest) (
 	req.ConfirmationStatus = ConfirmationApproved
 	if level == ConfirmationRequiredLevel {
 		req.ConfirmationStatus = ConfirmationPending
+	}
+	if req.Source == SourceMCP {
+		// Fail closed: a command created by the Hermes integration is never
+		// auto-approved, regardless of the tool's capability metadata. Only an
+		// independent operator approval can transition it.
+		req.ConfirmationStatus = ConfirmationPending
+	}
+	if req.Source == "" {
+		req.Source = SourceAPI
 	}
 	return uc.repo.CreateCommand(ctx, req)
 }

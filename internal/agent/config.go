@@ -18,16 +18,19 @@ type Config struct {
 	// profiles is the loaded project loader, built during LoadConfig.
 	profiles *project.Loader `yaml:"-"`
 
-	CentralURL        string                `yaml:"central_url"`
-	RegistrationToken string                `yaml:"registration_token"`
-	Secret            string                `yaml:"secret"`
-	SigningKey        string                `yaml:"signing_key"`
-	Version           string                `yaml:"version"`
-	Server            ServerInfo            `yaml:"server"`
-	AgentID           string                `yaml:"agent_id"`
-	PollInterval      int                   `yaml:"poll_interval"`
-	ExecutionPolicy   ExecutionPolicyConfig `yaml:"execution_policy"`
-	ProjectConfigs    []project.Config      `yaml:"projects"`
+	CentralURL        string     `yaml:"central_url"`
+	RegistrationToken string     `yaml:"registration_token"`
+	Secret            string     `yaml:"secret"`
+	SigningKey        string     `yaml:"signing_key"`
+	Version           string     `yaml:"version"`
+	Server            ServerInfo `yaml:"server"`
+	AgentID           string     `yaml:"agent_id"`
+	PollInterval      int        `yaml:"poll_interval"`
+	// HealthReportInterval is how often the agent submits a full health report
+	// to central. Zero uses the default of 60s.
+	HealthReportInterval int                   `yaml:"health_report_interval"`
+	ExecutionPolicy      ExecutionPolicyConfig `yaml:"execution_policy"`
+	ProjectConfigs       []project.Config      `yaml:"projects"`
 	// AllowInsecureCentral permits an http:// central_url even when the agent
 	// reports a production environment. It exists only for local development
 	// against a TLS-terminated proxy and defaults to deny.

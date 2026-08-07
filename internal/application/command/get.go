@@ -26,6 +26,16 @@ type GetCommandResponse struct {
 	CreatedAt          time.Time
 	LeasedAt           *time.Time
 	CompletedAt        *time.Time
+	// Source is the immutable command origin ('api', 'mcp' or 'system').
+	Source string
+	// RequestedBy is the actor that requested the command.
+	RequestedBy string
+	RequestedAt time.Time
+	// ApprovedBy is the authenticated operator that approved the command, set
+	// exactly once at the pending -> approved transition.
+	ApprovedBy   *string
+	ApprovedAt   *time.Time
+	ApprovalNote *string
 }
 
 type GetCommandUseCase struct {

@@ -28,7 +28,7 @@ type RouterDeps struct {
 	TimestampWindow time.Duration
 }
 
-func NewRouter(deps RouterDeps, agents *AgentHandler, commands *CommandHandler, capabilities *CapabilityHandler) http.Handler {
+func NewRouter(deps RouterDeps, agents *AgentHandler, commands *CommandHandler, capabilities *CapabilityHandler, health *HealthHandler, alerts *AlertHandler) http.Handler {
 	window := deps.TimestampWindow
 	if window <= 0 {
 		window = agentsign.DefaultTimestampWindow
@@ -51,11 +51,15 @@ func NewRouter(deps RouterDeps, agents *AgentHandler, commands *CommandHandler, 
 		Recovery(deps.Logger),
 		MaxBodyBytes(maxRequestBodyBytes),
 		OperatorAuth(deps.OperatorToken),
+		// Every operator action is attributed to an actor recorded on the
+		// request. This runs after auth so it never grants access on its own.
+		ActorIdentity(),
 	}
 
 	mux.Handle("GET /healthz", chain(http.HandlerFunc(handleHealthz), global...))
 	mux.Handle("POST /api/v1/agents/register", chain(http.HandlerFunc(agents.Register), global...))
 	mux.Handle("POST /api/v1/agents/heartbeat", chain(http.HandlerFunc(agents.Heartbeat), agentAuth...))
+	mux.Handle("POST /api/v1/agents/health", chain(http.HandlerFunc(health.Report), agentAuth...))
 	mux.Handle("POST /api/v1/agents/unregister", chain(http.HandlerFunc(agents.Unregister), agentAuth...))
 	mux.Handle("POST /api/v1/commands", chain(http.HandlerFunc(commands.Create), operatorAuth...))
 	mux.Handle("GET /api/v1/commands/{id}", chain(http.HandlerFunc(commands.Get), operatorAuth...))
@@ -65,6 +69,9 @@ func NewRouter(deps RouterDeps, agents *AgentHandler, commands *CommandHandler, 
 	mux.Handle("POST /api/v1/commands/fail", chain(http.HandlerFunc(commands.Fail), agentAuth...))
 	mux.Handle("POST /api/v1/commands/approve", chain(http.HandlerFunc(commands.Approve), operatorAuth...))
 	mux.Handle("POST /api/v1/capabilities", chain(http.HandlerFunc(capabilities.Sync), agentAuth...))
+	mux.Handle("GET /api/v1/health", chain(http.HandlerFunc(health.List), operatorAuth...))
+	mux.Handle("GET /api/v1/alerts", chain(http.HandlerFunc(alerts.List), operatorAuth...))
+	mux.Handle("POST /api/v1/alerts/{id}/acknowledge", chain(http.HandlerFunc(alerts.Acknowledge), operatorAuth...))
 	return mux
 }
 

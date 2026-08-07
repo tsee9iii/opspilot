@@ -11,6 +11,23 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AgentHealth struct {
+	AgentID           uuid.UUID
+	ReportedAt        time.Time
+	AgentVersion      string
+	Hostname          string
+	Environment       string
+	Status            string
+	CpuUserPercent    float64
+	CpuSystemPercent  float64
+	CpuIdlePercent    float64
+	MemoryUsedPercent float64
+	DiskUsedPercent   float64
+	Snapshot          []byte
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
 type Agents struct {
 	ID            uuid.UUID
 	ServerID      uuid.UUID
@@ -21,6 +38,23 @@ type Agents struct {
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 	SigningKey    string
+}
+
+type Alerts struct {
+	ID             uuid.UUID
+	AgentID        uuid.UUID
+	ServerID       pgtype.UUID
+	RuleType       string
+	Severity       string
+	Status         string
+	Message        string
+	FirstSeenAt    time.Time
+	LastSeenAt     time.Time
+	ResolvedAt     pgtype.Timestamptz
+	AcknowledgedAt pgtype.Timestamptz
+	AcknowledgedBy pgtype.Text
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 type Capabilities struct {
@@ -53,6 +87,12 @@ type Commands struct {
 	CompletedAt        pgtype.Timestamptz
 	ConfirmationStatus string
 	ConfirmedAt        pgtype.Timestamptz
+	Source             string
+	RequestedBy        string
+	RequestedAt        time.Time
+	ApprovedBy         pgtype.Text
+	ApprovedAt         pgtype.Timestamptz
+	ApprovalNote       pgtype.Text
 }
 
 type RegistrationTokens struct {

@@ -36,6 +36,8 @@ func (r *CommandRepository) CreateCommand(ctx context.Context, req appcommand.Cr
 		ToolName:           req.Tool,
 		Payload:            req.Payload,
 		ConfirmationStatus: req.ConfirmationStatus,
+		Source:             req.Source,
+		RequestedBy:        req.RequestedBy,
 	})
 	if err != nil {
 		return appcommand.CreateCommandResponse{}, fmt.Errorf("postgres: create command: %w", err)
@@ -156,15 +158,21 @@ func (r *CommandRepository) FailCommand(ctx context.Context, req appcommand.Fail
 }
 
 // ApproveCommand transitions a command awaiting confirmation (pending ->
-// approved) and stamps confirmed_at. Approving an already-approved command is
-// an idempotent success; approving a non-existent command is not found.
+// approved) and stamps the audit fields (approved_at, approved_by,
+// approval_note). Approving an already-approved command is an idempotent
+// success that never overwrites the original approval; approving a
+// non-existent command is not found.
 func (r *CommandRepository) ApproveCommand(ctx context.Context, req appcommand.ApproveCommandRequest) (appcommand.ApproveCommandResponse, error) {
 	id, err := uuid.Parse(req.CommandID)
 	if err != nil {
 		return appcommand.ApproveCommandResponse{}, fmt.Errorf("postgres: parse command id: %w", err)
 	}
 
-	row, err := r.q.ApproveCommand(ctx, id)
+	row, err := r.q.ApproveCommand(ctx, postgresql.ApproveCommandParams{
+		ID:           id,
+		ApprovedBy:   pgtype.Text{String: req.ApprovedBy, Valid: true},
+		ApprovalNote: pgtype.Text{String: req.ApprovalNote, Valid: true},
+	})
 	if err == nil {
 		return appcommand.ApproveCommandResponse{
 			CommandID: row.ID.String(),
@@ -218,6 +226,12 @@ func (r *CommandRepository) GetCommand(ctx context.Context, req appcommand.GetCo
 		CreatedAt:          row.CreatedAt,
 		LeasedAt:           pgtypeTimePtr(row.LeasedAt),
 		CompletedAt:        pgtypeTimePtr(row.CompletedAt),
+		Source:             row.Source,
+		RequestedBy:        row.RequestedBy,
+		RequestedAt:        row.RequestedAt,
+		ApprovedBy:         pgtypeTextPtr(row.ApprovedBy),
+		ApprovedAt:         pgtypeTimePtr(row.ApprovedAt),
+		ApprovalNote:       pgtypeTextPtr(row.ApprovalNote),
 	}, nil
 }
 

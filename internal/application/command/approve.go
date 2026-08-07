@@ -19,6 +19,11 @@ const (
 
 type ApproveCommandRequest struct {
 	CommandID string
+	// ApprovedBy is the authenticated operator actor. It is recorded exactly
+	// once at the pending -> approved transition and never overwritten.
+	ApprovedBy string
+	// ApprovalNote is an optional human note recorded with the approval.
+	ApprovalNote string
 }
 
 type ApproveCommandResponse struct {

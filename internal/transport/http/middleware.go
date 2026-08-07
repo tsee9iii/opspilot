@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"crypto/subtle"
 	"net/http"
 	"runtime/debug"
@@ -103,4 +104,47 @@ func bearerToken(r *http.Request) []byte {
 		return nil
 	}
 	return []byte(auth[len(prefix):])
+}
+
+// actorContextKey carries the authenticated operator actor through the request
+// context. It is only set after bearer authentication has succeeded; a request
+// without an actor header never reaches a handler that requires one.
+type actorContextKey struct{}
+
+// OperatorActor returns the actor identified by the X-Operator-Actor header,
+// or the empty string when no actor was captured.
+func OperatorActor(r *http.Request) string {
+	v, _ := r.Context().Value(actorContextKey{}).(string)
+	return v
+}
+
+// maxActorLen bounds the length of an operator actor identifier. The header is
+// opaque (a username, an email, or an integration identity) but always bounded.
+const maxActorLen = 128
+
+// ActorIdentity is the middleware boundary that records which operator
+// performed an action. It runs after OperatorAuth and never authorizes on its
+// own: the actor header is treated purely as audit metadata. Endpoints that
+// need an actor reject requests that omit or malform it.
+func ActorIdentity() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			actor := r.Header.Get("X-Operator-Actor")
+			if actor == "" {
+				writeError(w, http.StatusBadRequest, "actor_required", "x-operator-actor header is required")
+				return
+			}
+			if len(actor) > maxActorLen {
+				writeError(w, http.StatusBadRequest, "actor_required", "x-operator-actor header is too long")
+				return
+			}
+			for _, rn := range actor {
+				if rn < 0x20 || rn == 0x7f {
+					writeError(w, http.StatusBadRequest, "actor_required", "x-operator-actor header contains invalid characters")
+					return
+				}
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), actorContextKey{}, actor)))
+		})
+	}
 }

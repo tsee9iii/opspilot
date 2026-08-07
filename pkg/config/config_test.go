@@ -27,6 +27,24 @@ func clearEnv(t *testing.T) {
 		"OPSPILOT_OPERATOR_TOKEN",
 		"OPSPILOT_MCP_EXECUTION_TIMEOUT_SECONDS",
 		"OPSPILOT_MCP_READ_ONLY",
+		"OPSPILOT_MCP_MODE",
+		"OPSPILOT_ALERTS_ENABLED",
+		"OPSPILOT_ALERTS_INTERVAL_SECONDS",
+		"OPSPILOT_ALERTS_AGENT_OFFLINE_ENABLED",
+		"OPSPILOT_ALERTS_AGENT_OFFLINE_SEVERITY",
+		"OPSPILOT_ALERTS_AGENT_OFFLINE_MAX_OFFLINE_SECONDS",
+		"OPSPILOT_ALERTS_DISK_USAGE_ENABLED",
+		"OPSPILOT_ALERTS_DISK_USAGE_SEVERITY",
+		"OPSPILOT_ALERTS_DISK_USAGE_THRESHOLD_PERCENT",
+		"OPSPILOT_ALERTS_HEALTH_REPORT_STALE_ENABLED",
+		"OPSPILOT_ALERTS_HEALTH_REPORT_STALE_SEVERITY",
+		"OPSPILOT_ALERTS_HEALTH_REPORT_STALE_MAX_REPORT_AGE_SECONDS",
+		"OPSPILOT_ALERTS_PROJECT_UNHEALTHY_ENABLED",
+		"OPSPILOT_ALERTS_PROJECT_UNHEALTHY_SEVERITY",
+		"OPSPILOT_WEBHOOK_ENABLED",
+		"OPSPILOT_WEBHOOK_URL",
+		"OPSPILOT_WEBHOOK_SECRET",
+		"OPSPILOT_WEBHOOK_TIMEOUT_SECONDS",
 	} {
 		t.Setenv(k, "")
 	}
@@ -65,6 +83,9 @@ func TestLoadDefaultsOnly(t *testing.T) {
 	}
 	if cfg.MCP.ExecutionTimeoutSeconds != 300 {
 		t.Fatalf("unexpected mcp: %+v", cfg.MCP)
+	}
+	if cfg.MCP.Mode != MCPModeInventory {
+		t.Fatalf("unexpected default MCP mode: %q", cfg.MCP.Mode)
 	}
 	if cfg.Env != "development" {
 		t.Fatalf("unexpected env: %q", cfg.Env)
@@ -326,8 +347,14 @@ func TestValidateDevelopmentDefaultsPass(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("development defaults must validate: %v", err)
 	}
-	if !cfg.MCP.ReadOnly {
-		t.Fatal("MCP read-only must default to true")
+	if cfg.MCP.Mode != MCPModeInventory {
+		t.Fatal("MCP mode must default to inventory (the most restrictive tier)")
+	}
+	if cfg.Alerts.Enabled {
+		t.Fatal("alerts must be disabled by default")
+	}
+	if cfg.Webhook.Enabled {
+		t.Fatal("alert webhooks must be disabled by default")
 	}
 }
 
@@ -413,7 +440,32 @@ func TestValidateDevelopmentIgnoresDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadMCPReadOnlyFromEnv(t *testing.T) {
+func TestValidateRejectsUnknownMCPMode(t *testing.T) {
+	cfg := prodConfig()
+	cfg.MCP.Mode = "admin"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "OPSPILOT_MCP_MODE") {
+		t.Fatalf("expected mode validation error, got %v", err)
+	}
+}
+
+func TestLoadMCPModeFromEnv(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OPSPILOT_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
+	t.Setenv("OPSPILOT_MCP_MODE", "operate")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.MCP.Mode != "operate" {
+		t.Fatalf("expected operate mode from env, got %q", cfg.MCP.Mode)
+	}
+}
+
+// TestLoadMCPReadOnlyAliasPins inventory pins the deprecated read_only alias:
+// read_only=false maps onto operate (the tier that restores execution).
+func TestLoadMCPReadOnlyAliasPinsInventory(t *testing.T) {
 	clearEnv(t)
 	t.Setenv("OPSPILOT_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
 	t.Setenv("OPSPILOT_MCP_READ_ONLY", "false")
@@ -422,7 +474,50 @@ func TestLoadMCPReadOnlyFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if cfg.MCP.ReadOnly {
-		t.Fatal("expected OPSPILOT_MCP_READ_ONLY=false to disable read-only mode")
+	if cfg.MCP.Mode != "operate" {
+		t.Fatalf("expected OPSPILOT_MCP_READ_ONLY=false to map onto operate, got %q", cfg.MCP.Mode)
+	}
+}
+
+func TestLoadAlertsFromEnv(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("OPSPILOT_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
+	t.Setenv("OPSPILOT_ALERTS_ENABLED", "true")
+	t.Setenv("OPSPILOT_ALERTS_INTERVAL_SECONDS", "30")
+	t.Setenv("OPSPILOT_ALERTS_DISK_USAGE_ENABLED", "true")
+	t.Setenv("OPSPILOT_ALERTS_DISK_USAGE_THRESHOLD_PERCENT", "85.5")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !cfg.Alerts.Enabled || cfg.Alerts.IntervalSeconds != 30 {
+		t.Fatalf("unexpected alerts config: %+v", cfg.Alerts)
+	}
+	if !cfg.Alerts.DiskUsage.Enabled || cfg.Alerts.DiskUsage.ThresholdPercent != 85.5 {
+		t.Fatalf("unexpected disk rule: %+v", cfg.Alerts.DiskUsage)
+	}
+}
+
+func TestValidateProductionRejectsInsecureWebhook(t *testing.T) {
+	cfg := prodConfig()
+	cfg.Webhook.Enabled = true
+	cfg.Webhook.URL = "http://example.com/hook"
+	cfg.Webhook.Secret = "s3cret"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "OPSPILOT_WEBHOOK_URL") {
+		t.Fatalf("expected https webhook validation error, got %v", err)
+	}
+}
+
+func TestValidateProductionRejectsMissingWebhookSecret(t *testing.T) {
+	cfg := prodConfig()
+	cfg.Webhook.Enabled = true
+	cfg.Webhook.URL = "https://example.com/hook"
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "OPSPILOT_WEBHOOK_SECRET") {
+		t.Fatalf("expected webhook secret validation error, got %v", err)
 	}
 }

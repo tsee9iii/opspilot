@@ -19,10 +19,13 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/tsee9iii/opspilot/internal/application/agent"
+	appalert "github.com/tsee9iii/opspilot/internal/application/alert"
 	appcapability "github.com/tsee9iii/opspilot/internal/application/capability"
 	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
+	apphealth "github.com/tsee9iii/opspilot/internal/application/health"
 	"github.com/tsee9iii/opspilot/internal/infrastructure/postgres"
 	"github.com/tsee9iii/opspilot/internal/infrastructure/security"
+	"github.com/tsee9iii/opspilot/internal/infrastructure/webhook"
 	"github.com/tsee9iii/opspilot/internal/migration"
 	httpx "github.com/tsee9iii/opspilot/internal/transport/http"
 	"github.com/tsee9iii/opspilot/pkg/config"
@@ -34,6 +37,10 @@ type App struct {
 	cfg  *config.Config
 	log  *zap.Logger
 	pool *pgxpool.Pool
+
+	// evaluator runs the in-process alert rules. It is nil when alerting is
+	// disabled.
+	evaluator *appalert.Evaluator
 }
 
 func New(ctx context.Context) (*App, error) {
@@ -82,6 +89,10 @@ func (a *App) Run(ctx context.Context) error {
 	defer a.pool.Close()
 
 	handler := a.buildHandler()
+	if a.evaluator != nil {
+		a.evaluator.Run(ctx)
+		defer a.evaluator.Wait()
+	}
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf("%s:%d", a.cfg.HTTP.Host, a.cfg.HTTP.Port),
@@ -142,6 +153,22 @@ func (a *App) buildHandler() http.Handler {
 	approvalCommandUC := appcommand.NewApprovalUseCase(commandRepo)
 	getCommandUC := appcommand.NewGetCommandUseCase(commandRepo)
 	capabilityUC := appcapability.NewSyncUseCase(agentRepo, capabilityRepo)
+
+	healthRepo := postgres.NewHealthRepository(a.pool)
+	healthReportUC := apphealth.NewReportUseCase(healthRepo)
+	healthGetUC := apphealth.NewGetUseCase(healthRepo)
+
+	alertRepo := postgres.NewAlertRepository(a.pool)
+	alertListUC := appalert.NewListUseCase(alertRepo)
+	alertAckUC := appalert.NewAcknowledgeUseCase(alertRepo)
+
+	notifier := a.buildAlertNotifier()
+	a.evaluator = appalert.NewEvaluator(a.log, alertRepo, notifier, &appalert.Config{
+		Enabled:  a.cfg.Alerts.Enabled,
+		Interval: time.Duration(a.cfg.Alerts.IntervalSeconds) * time.Second,
+		Rules:    appalertRules(a.cfg),
+	})
+
 	return httpx.NewRouter(
 		httpx.RouterDeps{
 			Agents:        agentRepo,
@@ -151,5 +178,70 @@ func (a *App) buildHandler() http.Handler {
 		httpx.NewAgentHandler(registerUC, heartbeatUC, unregisterUC),
 		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC, approvalCommandUC, getCommandUC),
 		httpx.NewCapabilityHandler(capabilityUC),
+		httpx.NewHealthHandler(healthReportUC, healthGetUC),
+		httpx.NewAlertHandler(alertListUC, alertAckUC),
 	)
+}
+
+// buildAlertNotifier constructs the outbound webhook delivery boundary, or a
+// disabled notifier when webhooks are not configured. It is nil-safe for the
+// evaluator.
+func (a *App) buildAlertNotifier() appalert.Notifier {
+	cfg := a.cfg.Webhook
+	if !cfg.Enabled {
+		return nil
+	}
+	notifier, err := webhook.New(webhook.Options{
+		URL:     cfg.URL,
+		Secret:  cfg.Secret,
+		Timeout: time.Duration(cfg.TimeoutSeconds) * time.Second,
+	}, a.log)
+	if err != nil {
+		a.log.Warn("alert webhook disabled due to invalid configuration", zap.Error(err))
+		return nil
+	}
+	return notifier
+}
+
+// appalertRules converts the configured alert section into evaluator rules.
+// Only enabled rules with valid parameters are returned.
+func appalertRules(cfg *config.Config) []appalert.Rule {
+	var rules []appalert.Rule
+
+	if cfg.Alerts.AgentOffline.Enabled && cfg.Alerts.AgentOffline.MaxOfflineSeconds > 0 {
+		rules = append(rules, appalert.Rule{
+			Type:       appalert.RuleAgentOffline,
+			Severity:   severityOrDefault(cfg.Alerts.AgentOffline.Severity, appalert.SeverityCritical),
+			MaxOffline: time.Duration(cfg.Alerts.AgentOffline.MaxOfflineSeconds) * time.Second,
+		})
+	}
+	if cfg.Alerts.DiskUsage.Enabled && cfg.Alerts.DiskUsage.ThresholdPercent > 0 {
+		rules = append(rules, appalert.Rule{
+			Type:          appalert.RuleDiskUsage,
+			Severity:      severityOrDefault(cfg.Alerts.DiskUsage.Severity, appalert.SeverityWarning),
+			DiskThreshold: cfg.Alerts.DiskUsage.ThresholdPercent,
+		})
+	}
+	if cfg.Alerts.HealthReportStale.Enabled && cfg.Alerts.HealthReportStale.MaxReportAgeSeconds > 0 {
+		rules = append(rules, appalert.Rule{
+			Type:         appalert.RuleHealthReportStale,
+			Severity:     severityOrDefault(cfg.Alerts.HealthReportStale.Severity, appalert.SeverityWarning),
+			MaxReportAge: time.Duration(cfg.Alerts.HealthReportStale.MaxReportAgeSeconds) * time.Second,
+		})
+	}
+	if cfg.Alerts.ProjectUnhealthy.Enabled {
+		rules = append(rules, appalert.Rule{
+			Type:          appalert.RuleProjectUnhealthy,
+			Severity:      severityOrDefault(cfg.Alerts.ProjectUnhealthy.Severity, appalert.SeverityCritical),
+			ProjectHealth: true,
+		})
+	}
+	return rules
+}
+
+func severityOrDefault(v, fallback string) string {
+	if v == appalert.SeverityCritical || v == appalert.SeverityWarning {
+		return v
+	}
+	return fallback
 }

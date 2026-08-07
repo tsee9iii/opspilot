@@ -16,6 +16,9 @@ import (
 const (
 	heartbeatInterval = 30 * time.Second
 	registerTimeout   = 10 * time.Second
+	// defaultHealthReportInterval is used when the agent config does not set a
+	// health_report_interval.
+	defaultHealthReportInterval = 60 * time.Second
 )
 
 type Agent struct {
@@ -55,9 +58,69 @@ func (a *Agent) Run(ctx context.Context) error {
 	a.log.Info("agent heartbeat loop started", zap.Duration("interval", heartbeatInterval))
 	go a.heartbeat(ctx)
 
+	a.log.Info("agent health report loop started", zap.Duration("interval", a.healthReportInterval()))
+	go a.healthReportLoop(ctx)
+
 	interval := a.pollInterval()
 	a.log.Info("agent command loop started", zap.Duration("interval", interval))
 	return a.pollCommands(ctx, interval)
+}
+
+func (a *Agent) healthReportInterval() time.Duration {
+	if a.cfg.HealthReportInterval > 0 {
+		return time.Duration(a.cfg.HealthReportInterval) * time.Second
+	}
+	return defaultHealthReportInterval
+}
+
+func (a *Agent) healthReportLoop(ctx context.Context) error {
+	interval := a.healthReportInterval()
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-timer.C:
+			if err := a.sendHealthReport(ctx); err != nil {
+				a.log.Warn("health report failed", zap.Error(err))
+			}
+			timer.Reset(interval)
+		}
+	}
+}
+
+func (a *Agent) sendHealthReport(ctx context.Context) error {
+	collector := NewHealthCollector(a.cfg, a.registry, a.log)
+	report, err := collector.Collect(ctx)
+	if err != nil {
+		return fmt.Errorf("agent: collect health: %w", err)
+	}
+	if report.AgentID == "" {
+		report.AgentID = a.cfg.AgentID
+	}
+
+	body, err := json.Marshal(report)
+	if err != nil {
+		return fmt.Errorf("agent: marshal health report: %w", err)
+	}
+
+	req, err := a.newRequest(ctx, http.MethodPost, "/api/v1/agents/health", body)
+	if err != nil {
+		return err
+	}
+
+	resp, err := a.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("agent: health report request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("agent: health report failed: %s", readErrorMessage(resp))
+	}
+	return nil
 }
 
 func (a *Agent) heartbeat(ctx context.Context) error {

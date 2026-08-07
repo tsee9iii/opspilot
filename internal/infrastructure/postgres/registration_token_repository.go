@@ -108,3 +108,11 @@ func pgtypeTimePtr(v pgtype.Timestamptz) *time.Time {
 	}
 	return &v.Time
 }
+
+func pgtypeUUID(v uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: v, Valid: true}
+}
+
+func pgtypeUUIDValue(v pgtype.UUID) uuid.UUID {
+	return uuid.UUID(v.Bytes)
+}

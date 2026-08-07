@@ -10,6 +10,10 @@ agent_id: ""
 # the agent can HMAC-sign subsequent requests.
 signing_key: ""
 poll_interval: 5
+# health_report_interval is how often the agent gathers CPU/memory/disk metrics
+# (and probes configured project health URLs) and reports them to central in
+# seconds. Zero disables the health report loop.
+health_report_interval: 60
 execution_policy:
   enabled: true
   timeout: 30s

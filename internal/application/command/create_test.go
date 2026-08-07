@@ -51,6 +51,54 @@ func TestCreatePendingForRequiredTool(t *testing.T) {
 	}
 }
 
+// TestCreateMCPAlwaysPending fails closed: a command created by the MCP path is
+// always pending, even for tools whose capability metadata would otherwise be
+// auto-approved. Only an independent operator approval can release it.
+func TestCreateMCPAlwaysPending(t *testing.T) {
+	agentID := uuid.New()
+	repo := &fakeRepo{}
+	uc := NewCreateUseCase(repo, &fakeResolver{level: func(uuid.UUID, string) (string, error) {
+		return "none", nil
+	}})
+
+	_, err := uc.Create(context.Background(), CreateCommandRequest{
+		AgentID: agentID.String(), Tool: "system.uptime", Payload: []byte(`{}`),
+		Source: SourceMCP, RequestedBy: "hermes",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.created[0].Source != SourceMCP {
+		t.Fatalf("expected source mcp, got %q", repo.created[0].Source)
+	}
+	if repo.created[0].RequestedBy != "hermes" {
+		t.Fatalf("expected requested_by hermes, got %q", repo.created[0].RequestedBy)
+	}
+	if repo.created[0].ConfirmationStatus != ConfirmationPending {
+		t.Fatalf("MCP commands must always be pending, got %q", repo.created[0].ConfirmationStatus)
+	}
+}
+
+// TestCreateDefaultsSourceToAPI pins that an unset source is recorded as 'api'
+// (an authenticated operator request) rather than passing through empty.
+func TestCreateDefaultsSourceToAPI(t *testing.T) {
+	agentID := uuid.New()
+	repo := &fakeRepo{}
+	uc := NewCreateUseCase(repo, &fakeResolver{level: func(uuid.UUID, string) (string, error) {
+		return "none", nil
+	}})
+
+	_, err := uc.Create(context.Background(), CreateCommandRequest{
+		AgentID: agentID.String(), Tool: "system.uptime", Payload: []byte(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.created[0].Source != SourceAPI {
+		t.Fatalf("expected default source api, got %q", repo.created[0].Source)
+	}
+}
+
 func TestCreateRejectsUnknownCapability(t *testing.T) {
 	agentID := uuid.New()
 	repo := &fakeRepo{}

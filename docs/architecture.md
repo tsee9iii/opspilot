@@ -4,10 +4,11 @@ This document describes the **current** implementation only. Planned features ar
 
 ## Overview
 
-opspilot is a Go monorepo with two executables:
+opspilot is a Go monorepo with three executables:
 
 - **central** — the control plane. Exposes a JSON HTTP API, owns the PostgreSQL database, and holds the command queue.
-- **agent** — runs on managed hosts. Registers itself, reports heartbeats, advertises its capabilities, and polls for, executes, and reports commands.
+- **agent** — runs on managed hosts. Registers itself, reports heartbeats and health, advertises its capabilities, and polls for, executes, and reports commands.
+- **mcp** — an MCP stdio server exposing the control plane to the Hermes assistant. Its toolset is mode-gated and always fails closed on mutations.
 
 ```mermaid
 flowchart LR
@@ -17,9 +18,12 @@ flowchart LR
     subgraph Control Plane
         C[central HTTP API]
         P[(PostgreSQL)]
+        M[mcp server]
     end
     A -- HTTPS/JSON --> C
     C -- SQL --> P
+    M -- SQL --> P
+    H[Hermes assistant] -- MCP stdio --> M
 ```
 
 ## Module layout
@@ -28,21 +32,24 @@ flowchart LR
 cmd/
   central/            central binary entrypoint
   agent/              agent binary entrypoint
+  mcp/                MCP stdio server entrypoint
 internal/
   bootstrap/          central composition root, lifecycle, graceful shutdown
   transport/http/     HTTP handlers, DTOs, routing (central)
-  application/        use cases (agent, command, capability)
+  application/        use cases (agent, command, capability, health, alert)
   domain/             entities (agent, server, command, registrationtoken)
   infrastructure/
     postgres/         sqlc-backed repositories, pgx pool
     security/         HMAC (tokens) and Argon2id (secrets) hashers
-  agent/              agent runtime, tool registry, executor, policy
+    webhook/          outbound signed webhook delivery (alerts)
+  agent/              agent runtime, tool registry, executor, policy, health collector
+  mcp/tools/          MCP tool definitions and mode-gated toolset builder
 pkg/
   config/             env-based configuration
   logger/             zap logger
 gen/postgresql/       sqlc-generated query code (checked in)
 sql/
-  migrations/         0001..0011 schema migrations
+  migrations/         0001..0014 schema migrations
   queries/            annotated SQL consumed by sqlc
 ```
 
@@ -79,29 +86,39 @@ flowchart TB
 | GET    | `/healthz`              | —           | `200 ok`         |
 | POST   | `/api/v1/agents/register` | token      | `201 {agent_id, status}` |
 | POST   | `/api/v1/agents/heartbeat` | agent_id+secret | `200 {status, next_heartbeat}` |
+| POST   | `/api/v1/agents/health` | agent_id+secret | `200 {status}` |
 | POST   | `/api/v1/commands`      | operator    | `201 {command_id, status}` |
+| POST   | `/api/v1/commands/approve` | operator | `200 {command_id, status}` |
 | POST   | `/api/v1/commands/lease` | —          | `200 {command_id, tool, payload}` or `204` |
 | POST   | `/api/v1/commands/start` | —          | `200 {command_id, status}` |
 | POST   | `/api/v1/commands/complete` | —        | `200 {command_id, status}` |
 | POST   | `/api/v1/commands/fail` | —           | `200 {command_id, status}` |
 | POST   | `/api/v1/capabilities`  | agent_id+secret | `200 {status, count}` |
+| GET    | `/api/v1/alerts`        | operator    | `200 {alerts, total}` |
+| POST   | `/api/v1/alerts/{id}/acknowledge` | operator | `200 {alert}` |
 
-Errors use a consistent envelope: `{"error":{"code","message"}}`. Command transition endpoints enforce ownership and state: `404 not_found`, `403 command_not_owned`, `409 invalid_transition`. Creating a command requires the operator bearer token (`operatorAuth` middleware, constant-time compare; failures return `401` without leaking whether a token was valid). Capability failures surface as `400 capability_not_found` when a tool has no registered capability and `409 capability_unavailable` when a registered capability is disabled — the command is never created.
+Errors use a consistent envelope: `{"error":{"code","message"}}`. Command transition endpoints enforce ownership and state: `404 not_found`, `403 command_not_owned`, `409 invalid_transition`. Creating a command requires the operator bearer token (`operatorAuth` middleware, constant-time compare; failures return `401` without leaking whether a token was valid). Every operator route also requires the `X-Operator-Actor` header (1–128 chars, control chars rejected) so each audit record names the human or system that acted. Capability failures surface as `400 capability_not_found` when a tool has no registered capability and `409 capability_unavailable` when a registered capability is disabled — the command is never created.
 
 ### Command lifecycle
 
 Commands flow through a state machine persisted in PostgreSQL. Transitions are atomic `UPDATE ... WHERE status = 'expected'` statements; leasing uses `FOR UPDATE SKIP LOCKED` (FIFO by `created_at`) so concurrent agents never claim the same row.
 
+Every command carries immutable audit fields recorded at creation: `source` (`api` / `mcp` / `system`), `requested_by`, `requested_at`. Confirmation-required commands are released only by an operator: `POST /commands/approve` writes `approved_by`, `approved_at` and an optional `approval_note` exactly once at the pending→approved transition.
+
 ```mermaid
 stateDiagram-v2
-    [*] --> pending: create
+    [*] --> pending: create (source, requested_by)
     pending --> leased: lease
+    pending --> approved: operator approves
     leased --> running: start
     running --> completed: complete (result)
     running --> failed: fail (error)
+    approved --> leased: lease
     completed --> [*]
     failed --> [*]
 ```
+
+Commands created through the MCP path are always pending and are never self-approved: they wait for an independent operator to approve them, even for tools whose capability metadata would otherwise auto-approve.
 
 ### Database schema
 
@@ -111,6 +128,8 @@ erDiagram
     agents ||--o{ commands : receives
     agents ||--o{ capabilities : exposes
     agents ||--o{ registration_tokens : "consumed by"
+    agents ||--o{ agent_health : "latest report"
+    agents ||--o{ alerts : fires
 
     servers {
         uuid id PK
@@ -139,6 +158,12 @@ erDiagram
         timestamptz completed_at
         timestamptz leased_at
         text lease_owner
+        text source "api|mcp|system"
+        text requested_by
+        timestamptz requested_at
+        text approved_by
+        timestamptz approved_at
+        text approval_note
     }
     capabilities {
         uuid id PK
@@ -154,6 +179,35 @@ erDiagram
         timestamptz expires_at
         timestamptz revoked_at
     }
+    agent_health {
+        uuid agent_id PK
+        uuid server_id FK
+        timestamptz reported_at
+        text status
+        text agent_version
+        text hostname
+        text environment
+        numeric cpu_user_percent
+        numeric cpu_system_percent
+        numeric cpu_idle_percent
+        numeric memory_used_percent
+        numeric disk_used_percent
+        jsonb snapshot "raw report, verbatim"
+    }
+    alerts {
+        uuid id PK
+        uuid agent_id FK
+        uuid server_id FK
+        text rule_type
+        text severity
+        text status "open|acknowledged|resolved"
+        text message
+        timestamptz first_seen_at
+        timestamptz last_seen_at
+        timestamptz resolved_at
+        timestamptz acknowledged_at
+        text acknowledged_by
+    }
 ```
 
 ### Security
@@ -163,7 +217,35 @@ erDiagram
 - **Fail-closed configuration**: central refuses to start with development defaults (`OPSPILOT_AUTH_SERVER_SECRET` / `OPSPILOT_OPERATOR_TOKEN` / `OPSPILOT_DB_PASSWORD` unset), with `sslmode=disable`, or binding `0.0.0.0` in production. Validation errors name the offending variable but never its value.
 - **Operator-authenticated command creation**: `POST /api/v1/commands` requires the operator bearer token so only authenticated operators can enqueue commands.
 - **Fail-closed capability resolution**: a command for a tool with no registered capability is rejected (`capability_not_found`); a command for a registered-but-disabled capability is rejected (`capability_unavailable`). Capabilities are never implicitly approved.
-- **MCP read-only by default**: the MCP server exposes only read-only tools (ping, inventory, `file_read`, `filesystem_list`, `docker_inspect`). Execution tools (`workflow_diagnose`, `workflow_deploy`) are registered only when `OPSPILOT_MCP_READ_ONLY=false`. The MCP service should run as a least-privilege database role.
+- **MCP modes**: the MCP toolset is built from a mode that defaults to `inventory` and only ever grows. `inventory` exposes pure reads over PostgreSQL (ping, inventory, health, alerts) and never contacts agents. `investigate` adds read-only agent tools (`file_read`, `filesystem_list`, `docker_inspect`, `workflow_diagnose`) that are still policy-enforced. `operate` adds `workflow_deploy`; any command created through MCP is always recorded as `source=mcp` and stays pending until an operator approves it — it is never self-approved. The deprecated `OPSPILOT_MCP_READ_ONLY` flag maps `true→inventory` / `false→operate`; an explicit `mode` always wins. The MCP service should run as a least-privilege database role.
+- **Operator audit actor**: every operator-authenticated route (command create/approve, alert list/acknowledge) requires the `X-Operator-Actor` header, and the actor is persisted on the affected record so approval chains are attributable.
+- **Webhook delivery**: outbound alert webhooks are disabled by default, require HTTPS in production, sign each raw payload with HMAC-SHA256 (`X-Opspilot-Signature`), carry an event id (`X-Opspilot-Event-Id`) for idempotency, and retry at most three times with backoff. Response bodies are never logged.
+
+### Agent health reporting
+
+Each agent runs a health collector on `health_report_interval` (default 60s), independent of the heartbeat and command-poll loops. It gathers CPU, memory and disk metrics from the local tools and optionally probes configured project health endpoints (via the SSRF-hardened `http.check` tool), then POSTs the report to `/api/v1/agents/health`. Central stores at most one report per agent (each report overwrites the previous) so it always holds the latest snapshot for alert evaluation. The raw report body is stored verbatim as `snapshot`.
+
+`GET /api/v1/alerts` and the MCP inventory tools read central state only — they never contact agents, so a fleet-wide health or alert query cannot trigger traffic to managed hosts.
+
+### Alert lifecycle
+
+A background evaluator in central periodically walks all agents with their latest health report and applies configured rules. Rules are inert unless enabled with a non-zero threshold:
+
+- `agent_offline` — last heartbeat older than `max_offline` (severity critical by default).
+- `disk_usage` — latest report `disk_used_percent` above `threshold_percent`.
+- `health_report_stale` — last health report older than `max_report_age` even though the agent is online.
+- `project_unhealthy` — parses the `project_health` section of the raw snapshot and fires when any configured probe reports unhealthy.
+
+```mermaid
+stateDiagram-v2
+    [*] --> open: rule fires
+    open --> acknowledged: operator acknowledges
+    open --> resolved: report recovers / rule clears
+    acknowledged --> resolved: report recovers / rule clears
+    resolved --> [*]
+```
+
+Alerts are idempotent per `(agent_id, rule_type)` while open: a repeated unhealthy report advances `last_seen_at` instead of opening a duplicate. Recovery resolves both open and acknowledged alerts. Acknowledging is an authenticated operator API action only — the MCP server has no acknowledge tool. Only state transitions emit webhook events (open, resolve, acknowledge).
 
 ## Agent
 
@@ -184,6 +266,7 @@ sequenceDiagram
         C-->>A: 200 {status, count}
     end
     A->>A: start heartbeat loop (goroutine)
+    A->>A: start health report loop (goroutine, interval)
     A->>A: start command poll loop (main)
 ```
 
@@ -228,9 +311,9 @@ The agent polls on a configurable interval. Each iteration: lease one command �
 
 | Binary   | Source                      | Keys (examples) |
 | -------- | --------------------------- | --------------- |
-| central  | env (`OPSPILOT_*`)          | `OPSPILOT_HTTP_PORT`, `OPSPILOT_DB_HOST`, `OPSPILOT_AUTH_SERVER_SECRET`, `OPSPILOT_OPERATOR_TOKEN` |
-| agent    | YAML (`configs/agent.example.yaml`) | `central_url`, `registration_token`, `secret`, `poll_interval`, `execution_policy`, `allow_insecure_central`, `filesystem.allow_absolute_paths`, `http_check.*` |
-| mcp      | env (`OPSPILOT_*`)          | `OPSPILOT_DB_HOST`, `OPSPILOT_MCP_READ_ONLY` (default `true`) |
+| central  | env (`OPSPILOT_*`)          | `OPSPILOT_HTTP_PORT`, `OPSPILOT_DB_HOST`, `OPSPILOT_AUTH_SERVER_SECRET`, `OPSPILOT_OPERATOR_TOKEN`, `OPSPILOT_ALERTS_ENABLED`, `OPSPILOT_ALERTS_INTERVAL_SECONDS`, `OPSPILOT_ALERTS_DISK_USAGE_THRESHOLD_PERCENT` (and sibling per-rule vars), `OPSPILOT_WEBHOOK_URL` / `OPSPILOT_WEBHOOK_SECRET` |
+| agent    | YAML (`configs/agent.example.yaml`) | `central_url`, `registration_token`, `secret`, `poll_interval`, `health_report_interval`, `execution_policy`, `allow_insecure_central`, `filesystem.allow_absolute_paths`, `http_check.*` |
+| mcp      | env (`OPSPILOT_*`)          | `OPSPILOT_DB_HOST`, `OPSPILOT_MCP_MODE` (`inventory` default, `investigate`, `operate`); deprecated `OPSPILOT_MCP_READ_ONLY` |
 
 ## Installer hardening
 

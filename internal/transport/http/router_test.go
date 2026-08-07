@@ -29,6 +29,8 @@ func createRouterFixture(t *testing.T, token string) http.Handler {
 		NewAgentHandler(nil, nil, nil),
 		NewCommandHandler(appcommand.NewCreateUseCase(&stubCommandRepo{}, &stubConfirmationResolver{}), nil, nil, nil, nil),
 		NewCapabilityHandler(nil),
+		NewHealthHandler(nil, nil),
+		NewAlertHandler(nil, nil),
 	)
 }
 
@@ -79,6 +81,8 @@ func newRouterFixture(t *testing.T, token string) http.Handler {
 		NewAgentHandler(nil, nil, nil),
 		NewCommandHandler(nil, nil, nil, nil, nil),
 		NewCapabilityHandler(nil),
+		NewHealthHandler(nil, nil),
+		NewAlertHandler(nil, nil),
 	)
 }
 
@@ -115,6 +119,9 @@ func TestRouterOperatorRoutesRequireToken(t *testing.T) {
 	requests := []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/api/v1/commands/00000000-0000-0000-0000-000000000001", nil),
 		httptest.NewRequest(http.MethodPost, "/api/v1/commands/approve", strings.NewReader(`{}`)),
+		httptest.NewRequest(http.MethodGet, "/api/v1/health", nil),
+		httptest.NewRequest(http.MethodGet, "/api/v1/alerts", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/alerts/00000000-0000-0000-0000-000000000001/acknowledge", strings.NewReader(`{}`)),
 	}
 	for _, req := range requests {
 		rec := httptest.NewRecorder()
@@ -125,18 +132,42 @@ func TestRouterOperatorRoutesRequireToken(t *testing.T) {
 	}
 }
 
+// TestRouterOperatorRoutesRequireActor proves every authenticated operator
+// action must carry an X-Operator-Actor header: actor attribution is enforced
+// after bearer auth and never optional.
+func TestRouterOperatorRoutesRequireActor(t *testing.T) {
+	h := newRouterFixture(t, "op-token")
+
+	requests := []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/api/v1/commands/00000000-0000-0000-0000-000000000001", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/commands/approve", strings.NewReader(`{}`)),
+		httptest.NewRequest(http.MethodGet, "/api/v1/health", nil),
+		httptest.NewRequest(http.MethodGet, "/api/v1/alerts", nil),
+		httptest.NewRequest(http.MethodPost, "/api/v1/alerts/00000000-0000-0000-0000-000000000001/acknowledge", strings.NewReader(`{}`)),
+	}
+	for _, req := range requests {
+		req.Header.Set("Authorization", "Bearer op-token")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s %s: expected 400 without actor header, got %d", req.Method, req.URL.Path, rec.Code)
+		}
+	}
+}
+
 func TestRouterOperatorRoutesAcceptCorrectToken(t *testing.T) {
 	h := newRouterFixture(t, "op-token")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/commands/00000000-0000-0000-0000-000000000001", nil)
 	req.Header.Set("Authorization", "Bearer op-token")
+	req.Header.Set("X-Operator-Actor", "operator@example.com")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
-	// The operator boundary passed; the nil-backed Get handler must not panic
-	// to a 500, but more importantly auth must not answer 401.
-	if rec.Code == http.StatusUnauthorized {
-		t.Fatal("expected token-authenticated request to pass the operator boundary")
+	// The operator and actor boundaries passed; the nil-backed Get handler must
+	// not panic to a 500, but more importantly auth must not answer 401/400.
+	if rec.Code == http.StatusUnauthorized || rec.Code == http.StatusBadRequest {
+		t.Fatalf("expected token+actor request to pass the operator boundary, got %d", rec.Code)
 	}
 }
 
@@ -172,11 +203,13 @@ func TestRouterCreateCommandRequiresOperatorAuth(t *testing.T) {
 	t.Run("valid bearer token reaches the handler", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/commands", body)
 		req.Header.Set("Authorization", "Bearer op-token")
+		req.Header.Set("X-Operator-Actor", "operator@example.com")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		// Auth passed and the stub create handler ran (validation rejected the
-		// all-zero agent UUID), proving the request crossed the operator
-		// boundary instead of being answered by the middleware.
+		// Auth and actor attribution passed and the stub create handler ran
+		// (validation rejected the all-zero agent UUID), proving the request
+		// crossed the operator boundary instead of being answered by the
+		// middleware.
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 from handler (auth passed), got %d", rec.Code)
 		}
@@ -188,6 +221,7 @@ func TestRouterAgentRoutesRequireSignature(t *testing.T) {
 
 	requests := []*http.Request{
 		httptest.NewRequest(http.MethodPost, "/api/v1/agents/heartbeat", strings.NewReader(`{}`)),
+		httptest.NewRequest(http.MethodPost, "/api/v1/agents/health", strings.NewReader(`{}`)),
 		httptest.NewRequest(http.MethodPost, "/api/v1/agents/unregister", strings.NewReader(`{}`)),
 		httptest.NewRequest(http.MethodPost, "/api/v1/commands/lease", strings.NewReader(`{}`)),
 		httptest.NewRequest(http.MethodPost, "/api/v1/commands/start", strings.NewReader(`{}`)),
@@ -219,6 +253,8 @@ func TestRouterAgentRoutesAcceptSignedRequest(t *testing.T) {
 		NewAgentHandler(nil, nil, nil),
 		NewCommandHandler(nil, nil, nil, nil, nil),
 		NewCapabilityHandler(nil),
+		NewHealthHandler(nil, nil),
+		NewAlertHandler(nil, nil),
 	)
 
 	req := signedRequest(t, http.MethodPost, "/api/v1/agents/heartbeat", agentID.String(), key, agentsign.Timestamp(), "router-nonce", `{"agent_id":"`+agentID.String()+`"}`)

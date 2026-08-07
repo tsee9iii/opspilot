@@ -49,6 +49,12 @@ func (h *CommandHandler) Get(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:          resp.CreatedAt.Format(time.RFC3339),
 		LeasedAt:           formatTimePtr(resp.LeasedAt),
 		CompletedAt:        formatTimePtr(resp.CompletedAt),
+		Source:             resp.Source,
+		RequestedBy:        resp.RequestedBy,
+		RequestedAt:        resp.RequestedAt.Format(time.RFC3339),
+		ApprovedBy:         resp.ApprovedBy,
+		ApprovedAt:         formatTimePtr(resp.ApprovedAt),
+		ApprovalNote:       resp.ApprovalNote,
 	})
 }
 
@@ -72,9 +78,11 @@ func (h *CommandHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp, err := h.create.Create(r.Context(), command.CreateCommandRequest{
-		AgentID: reqDTO.AgentID,
-		Tool:    reqDTO.Tool,
-		Payload: reqDTO.Payload,
+		AgentID:     reqDTO.AgentID,
+		Tool:        reqDTO.Tool,
+		Payload:     reqDTO.Payload,
+		Source:      command.SourceAPI,
+		RequestedBy: OperatorActor(r),
 	})
 	if err != nil {
 		switch {
@@ -214,7 +222,11 @@ func (h *CommandHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.approval.Approve(r.Context(), command.ApproveCommandRequest{CommandID: reqDTO.CommandID})
+	resp, err := h.approval.Approve(r.Context(), command.ApproveCommandRequest{
+		CommandID:    reqDTO.CommandID,
+		ApprovedBy:   OperatorActor(r),
+		ApprovalNote: reqDTO.ApprovalNote,
+	})
 	if err != nil {
 		switch {
 		case errors.Is(err, command.ErrInvalidCommandID):

@@ -7,8 +7,10 @@ import (
 
 	"github.com/google/uuid"
 
+	appalert "github.com/tsee9iii/opspilot/internal/application/alert"
 	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 	"github.com/tsee9iii/opspilot/internal/application/dispatch"
+	apphealth "github.com/tsee9iii/opspilot/internal/application/health"
 	"github.com/tsee9iii/opspilot/internal/application/inventory"
 )
 
@@ -41,6 +43,45 @@ type fakeCommandRepo struct {
 func (f *fakeCommandRepo) ListCommands(_ context.Context, req inventory.ListCommandsRequest) ([]inventory.CommandSummary, error) {
 	f.got = req
 	return f.commands, f.err
+}
+
+// fakeHealthRepo fakes the health read repository for tool tests.
+type fakeHealthRepo struct {
+	summaries []apphealth.Summary
+	signals   []apphealth.Signal
+	summary   apphealth.Summary
+	err       error
+}
+
+func (f *fakeHealthRepo) ListHealth(context.Context) ([]apphealth.Summary, error) {
+	return f.summaries, f.err
+}
+
+func (f *fakeHealthRepo) GetHealthByAgentID(context.Context, string) (apphealth.Summary, error) {
+	return f.summary, f.err
+}
+
+func (f *fakeHealthRepo) ListHealthSignals(context.Context) ([]apphealth.Signal, error) {
+	return f.signals, f.err
+}
+
+// fakeAlertRepo fakes the alert read repository for tool tests.
+type fakeAlertRepo struct {
+	alerts []appalert.Alert
+	alert  appalert.Alert
+	err    error
+}
+
+func (f *fakeAlertRepo) List(context.Context, string, string, string, string, int) ([]appalert.Alert, error) {
+	return f.alerts, f.err
+}
+
+func (f *fakeAlertRepo) GetByID(context.Context, string) (appalert.Alert, error) {
+	return f.alert, f.err
+}
+
+func (f *fakeAlertRepo) Acknowledge(context.Context, string, string) (appalert.Alert, error) {
+	return appalert.Alert{}, errors.New("acknowledge is never exposed through MCP tools")
 }
 
 // dispatchRepo fakes the command Repository so the real dispatch use case can

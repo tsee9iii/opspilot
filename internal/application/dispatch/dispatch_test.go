@@ -160,6 +160,27 @@ func TestDispatchTimeout(t *testing.T) {
 	}
 }
 
+func TestDispatchTagsCommandAsMCP(t *testing.T) {
+	agentID := uuid.New()
+	commandID := uuid.New()
+	repo := &fakeRepo{
+		createRes: appcommand.CreateCommandResponse{CommandID: commandID.String(), Status: appcommand.StatusPending},
+		getRes:    appcommand.GetCommandResponse{ID: commandID, ConfirmationStatus: appcommand.ConfirmationPending},
+	}
+	uc := newUseCase(t, &fakeConfirmationResolver{}, repo)
+
+	_, err := uc.Dispatch(context.Background(), DispatchRequest{AgentID: agentID.String(), Tool: WorkflowDeployTool, Payload: testPayload()})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if repo.created[0].Source != appcommand.SourceMCP {
+		t.Fatalf("expected source mcp, got %q", repo.created[0].Source)
+	}
+	if repo.created[0].RequestedBy != "hermes" {
+		t.Fatalf("expected requested_by hermes, got %q", repo.created[0].RequestedBy)
+	}
+}
+
 func TestDispatchValidation(t *testing.T) {
 	uc := newUseCase(t, &fakeConfirmationResolver{}, &fakeRepo{})
 

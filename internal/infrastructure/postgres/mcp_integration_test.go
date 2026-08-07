@@ -10,12 +10,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	appalert "github.com/tsee9iii/opspilot/internal/application/alert"
 	appcapability "github.com/tsee9iii/opspilot/internal/application/capability"
 	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 	appdispatch "github.com/tsee9iii/opspilot/internal/application/dispatch"
+	apphealth "github.com/tsee9iii/opspilot/internal/application/health"
 	appinventory "github.com/tsee9iii/opspilot/internal/application/inventory"
 	"github.com/tsee9iii/opspilot/internal/mcp"
 	"github.com/tsee9iii/opspilot/internal/mcp/tools"
+	"github.com/tsee9iii/opspilot/pkg/config"
 )
 
 // TestMCPToolsEndToEnd drives the MCP server over stdio against the real
@@ -57,6 +60,34 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 	getUC := appcommand.NewGetCommandUseCase(commandRepo)
 	dispatchUC := appdispatch.NewDispatchUseCase(createUC, getUC)
 
+	healthRepo := NewHealthRepository(pool)
+	alertRepo := NewAlertRepository(pool)
+
+	if _, err := healthRepo.UpsertHealth(ctx, apphealth.ReportRequest{
+		AgentID: agent.String(), ReportedAt: time.Now(), AgentVersion: "0.1.0",
+		Hostname: "edge-1", Environment: "prod", Status: "ok",
+		CPUUserPercent: 10, CPUSystemPercent: 5, CPUIdlePercent: 85,
+		MemoryUsedPercent: 40, DiskUsedPercent: 20,
+		Snapshot: []byte(`{"cpu_user_percent":10,"memory_used_percent":40}`),
+	}); err != nil {
+		t.Fatalf("seed health report: %v", err)
+	}
+
+	if created, err := alertRepo.UpsertOpenAlert(ctx, agent, server, "disk_usage", "warning", "disk at 95%"); err != nil || !created {
+		if err != nil {
+			t.Fatalf("seed alert: %v", err)
+		}
+		t.Fatalf("expected alert to be created")
+	}
+	seededAlerts, err := alertRepo.List(ctx, "open", "", "", "", 10)
+	if err != nil {
+		t.Fatalf("list seeded alert: %v", err)
+	}
+	if len(seededAlerts) != 1 {
+		t.Fatalf("expected 1 seeded alert, got %d", len(seededAlerts))
+	}
+	alertID := seededAlerts[0].ID
+
 	toolSet := tools.Build(tools.Dependencies{
 		Servers:    appinventory.NewListServersUseCase(inventoryRepo),
 		Agents:     appinventory.NewListAgentsUseCase(inventoryRepo),
@@ -64,9 +95,13 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		GetCommand: getUC,
 		Dispatch:   dispatchUC,
 		Pinger:     pool,
-		// The default (read-only) toolset omits the execution tools; this test
-		// opts in so the approval-before-execution flow can be exercised.
-		ReadOnly: false,
+		Health:     apphealth.NewGetUseCase(healthRepo),
+		Alerts:     appalert.NewListUseCase(alertRepo),
+		GetAlert:   appalert.NewGetUseCase(alertRepo),
+		// The default (inventory) toolset omits the execution tools; this test
+		// opts into the operate tier so the approval-before-execution flow can
+		// be exercised.
+		Mode: config.MCPModeOperate,
 	})
 
 	call := func(name string, args map[string]any) callOutput {
@@ -276,16 +311,21 @@ func TestMCPToolsEndToEnd(t *testing.T) {
 		}
 
 		argsByTool := map[string]map[string]any{
-			"ping":              {},
-			"list_servers":      {},
-			"list_agents":       {},
-			"list_commands":     {},
-			"get_command":       {"command_id": commandID.String()},
-			"workflow_diagnose": {"agent_id": agent.String()},
-			"workflow_deploy":   {"agent_id": agent.String(), "project": "merchant-api"},
-			"file_read":         {"agent_id": agent.String(), "path": "docker-compose.yml"},
-			"filesystem_list":   {"agent_id": agent.String(), "path": "."},
-			"docker_inspect":    {"agent_id": agent.String(), "container": "merchant-api"},
+			"ping":                  {},
+			"list_servers":          {},
+			"list_agents":           {},
+			"list_commands":         {},
+			"get_command":           {"command_id": commandID.String()},
+			"get_agent_health":      {"agent_id": agent.String()},
+			"list_agent_health":     {},
+			"list_unhealthy_agents": {},
+			"list_alerts":           {},
+			"get_alert":             {"alert_id": alertID.String()},
+			"workflow_diagnose":     {"agent_id": agent.String()},
+			"workflow_deploy":       {"agent_id": agent.String(), "project": "merchant-api"},
+			"file_read":             {"agent_id": agent.String(), "path": "docker-compose.yml"},
+			"filesystem_list":       {"agent_id": agent.String(), "path": "."},
+			"docker_inspect":        {"agent_id": agent.String(), "container": "merchant-api"},
 		}
 		for _, tool := range listing.Result.Tools {
 			if tool.OutputSchema.Required == nil {

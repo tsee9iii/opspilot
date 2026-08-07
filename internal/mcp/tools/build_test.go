@@ -3,47 +3,124 @@ package tools
 import (
 	"testing"
 
+	appalert "github.com/tsee9iii/opspilot/internal/application/alert"
 	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 	"github.com/tsee9iii/opspilot/internal/application/dispatch"
+	apphealth "github.com/tsee9iii/opspilot/internal/application/health"
 	"github.com/tsee9iii/opspilot/internal/application/inventory"
 	"github.com/tsee9iii/opspilot/internal/mcp"
+	"github.com/tsee9iii/opspilot/pkg/config"
 )
 
-// TestBuildDefinesMilestoneTools pins the exact set of MCP tools exposed to
-// clients. Future workflow tools (workflow_rollback, workflow_backup,
-// workflow_upgrade) are intentionally absent until their workflows exist.
-func TestBuildDefinesMilestoneTools(t *testing.T) {
-	ts := Build(Dependencies{
+func deps() Dependencies {
+	return Dependencies{
 		Servers:    inventory.NewListServersUseCase(&fakeServerRepo{}),
 		Agents:     inventory.NewListAgentsUseCase(&fakeAgentRepo{}),
 		Commands:   inventory.NewListCommandsUseCase(&fakeCommandRepo{}),
 		GetCommand: appcommand.NewGetCommandUseCase(&dispatchRepo{}),
 		Dispatch:   newDispatch(&dispatchRepo{}),
-	})
-
-	want := []string{
-		"ping",
-		"list_servers",
-		"list_agents",
-		"list_commands",
-		"get_command",
-		"workflow_diagnose",
-		"workflow_deploy",
-		"file_read",
-		"filesystem_list",
-		"docker_inspect",
+		Health:     apphealth.NewGetUseCase(&fakeHealthRepo{}),
+		Alerts:     appalert.NewListUseCase(&fakeAlertRepo{}),
+		GetAlert:   appalert.NewGetUseCase(&fakeAlertRepo{}),
 	}
+}
+
+// inventoryToolNames are the pure central-read tools every mode exposes.
+var inventoryToolNames = []string{
+	"ping",
+	"list_servers",
+	"list_agents",
+	"list_commands",
+	"get_command",
+	"get_agent_health",
+	"list_agent_health",
+	"list_unhealthy_agents",
+	"list_alerts",
+	"get_alert",
+}
+
+// diagnosticToolNames are the investigate-tier tools that dispatch read-only
+// inspection to agents.
+var diagnosticToolNames = []string{
+	"file_read",
+	"filesystem_list",
+	"docker_inspect",
+	"workflow_diagnose",
+}
+
+// TestBuildInventoryMode pins the most restrictive tier: pure central reads
+// only, no tools that contact agents or mutate anything.
+func TestBuildInventoryMode(t *testing.T) {
+	for _, mode := range []string{config.MCPModeInventory, ""} {
+		ts := Build(depsWithMode(mode))
+		seen := toolNames(ts)
+		for _, must := range inventoryToolNames {
+			if !seen[must] {
+				t.Fatalf("mode %q must expose %s", mode, must)
+			}
+		}
+		for _, banned := range append(diagnosticToolNames, "workflow_deploy") {
+			if seen[banned] {
+				t.Fatalf("mode %q must not expose %s", mode, banned)
+			}
+			if _, ok := ts.Get(banned); ok {
+				t.Fatalf("mode %q must not make %s callable", mode, banned)
+			}
+		}
+	}
+}
+
+// TestBuildInvestigateMode adds safe diagnostics but never the mutating deploy
+// tool.
+func TestBuildInvestigateMode(t *testing.T) {
+	ts := Build(depsWithMode(config.MCPModeInvestigate))
+	seen := toolNames(ts)
+	for _, must := range append(inventoryToolNames, diagnosticToolNames...) {
+		if !seen[must] {
+			t.Fatalf("investigate mode must expose %s", must)
+		}
+	}
+	if seen["workflow_deploy"] {
+		t.Fatal("investigate mode must not expose workflow_deploy")
+	}
+	if _, ok := ts.Get("workflow_deploy"); ok {
+		t.Fatal("investigate mode must not make workflow_deploy callable")
+	}
+}
+
+// TestBuildOperateMode is the only tier that exposes the mutating deploy tool.
+func TestBuildOperateMode(t *testing.T) {
+	ts := Build(depsWithMode(config.MCPModeOperate))
+	seen := toolNames(ts)
+	for _, must := range append(inventoryToolNames, diagnosticToolNames...) {
+		if !seen[must] {
+			t.Fatalf("operate mode must expose %s", must)
+		}
+	}
+	if !seen["workflow_deploy"] {
+		t.Fatal("operate mode must expose workflow_deploy")
+	}
+}
+
+// TestBuildToolCategories validates the category metadata of every exposed tool.
+func TestBuildToolCategories(t *testing.T) {
+	ts := Build(depsWithMode(config.MCPModeOperate))
 	wantCategory := map[string]string{
-		"ping":              CategorySystem,
-		"list_servers":      CategoryInventory,
-		"list_agents":       CategoryInventory,
-		"list_commands":     CategoryInventory,
-		"get_command":       CategoryInventory,
-		"workflow_diagnose": CategoryDiagnostics,
-		"workflow_deploy":   CategoryDeployment,
-		"file_read":         CategoryInvestigation,
-		"filesystem_list":   CategoryInvestigation,
-		"docker_inspect":    CategoryInvestigation,
+		"ping":                  CategorySystem,
+		"list_servers":          CategoryInventory,
+		"list_agents":           CategoryInventory,
+		"list_commands":         CategoryInventory,
+		"get_command":           CategoryInventory,
+		"get_agent_health":      CategoryInventory,
+		"list_agent_health":     CategoryInventory,
+		"list_unhealthy_agents": CategoryInventory,
+		"list_alerts":           CategoryInventory,
+		"get_alert":             CategoryInventory,
+		"workflow_diagnose":     CategoryDiagnostics,
+		"workflow_deploy":       CategoryDeployment,
+		"file_read":             CategoryInvestigation,
+		"filesystem_list":       CategoryInvestigation,
+		"docker_inspect":        CategoryInvestigation,
 	}
 	validCategory := map[string]bool{
 		CategoryInventory:     true,
@@ -54,12 +131,8 @@ func TestBuildDefinesMilestoneTools(t *testing.T) {
 		CategoryInvestigation: true,
 	}
 
-	defs := ts.Definitions()
-	if len(defs) != len(want) {
-		t.Fatalf("expected %d tools, got %d: %v", len(want), len(defs), defs)
-	}
 	seen := map[string]bool{}
-	for _, def := range defs {
+	for _, def := range ts.Definitions() {
 		seen[def.Name] = true
 		if def.Description == "" || len(def.InputSchema) == 0 || len(def.OutputSchema) == 0 {
 			t.Fatalf("tool %s missing metadata", def.Name)
@@ -71,7 +144,7 @@ func TestBuildDefinesMilestoneTools(t *testing.T) {
 			t.Fatalf("tool %s category = %q, want %q", def.Name, def.Category, wantCategory[def.Name])
 		}
 	}
-	for _, name := range want {
+	for name := range wantCategory {
 		if !seen[name] {
 			t.Fatalf("tool %s not registered", name)
 		}
@@ -101,51 +174,8 @@ func toolNames(ts *mcp.ToolSet) map[string]bool {
 	return seen
 }
 
-// TestBuildReadOnlyExcludesExecutionTools pins the safe default: a read-only
-// MCP process exposes inventory and read-only investigation tools but never
-// registers deployment or diagnostic execution tools.
-func TestBuildReadOnlyExcludesExecutionTools(t *testing.T) {
-	ts := Build(Dependencies{
-		Servers:    inventory.NewListServersUseCase(&fakeServerRepo{}),
-		Agents:     inventory.NewListAgentsUseCase(&fakeAgentRepo{}),
-		Commands:   inventory.NewListCommandsUseCase(&fakeCommandRepo{}),
-		GetCommand: appcommand.NewGetCommandUseCase(&dispatchRepo{}),
-		Dispatch:   newDispatch(&dispatchRepo{}),
-		ReadOnly:   true,
-	})
-
-	seen := toolNames(ts)
-	for _, must := range []string{"ping", "list_servers", "list_agents", "list_commands", "get_command", "file_read", "filesystem_list", "docker_inspect"} {
-		if !seen[must] {
-			t.Fatalf("read-only toolset must include %s", must)
-		}
-	}
-	for _, banned := range []string{"workflow_deploy", "workflow_diagnose"} {
-		if seen[banned] {
-			t.Fatalf("read-only toolset must not register execution tool %s", banned)
-		}
-		if _, ok := ts.Get(banned); ok {
-			t.Fatalf("execution tool %s must not be callable in read-only mode", banned)
-		}
-	}
-}
-
-// TestBuildOptInEnablesExecutionTools proves the explicit opt-out (ReadOnly
-// false) registers the deployment and diagnostic execution tools again.
-func TestBuildOptInEnablesExecutionTools(t *testing.T) {
-	ts := Build(Dependencies{
-		Servers:    inventory.NewListServersUseCase(&fakeServerRepo{}),
-		Agents:     inventory.NewListAgentsUseCase(&fakeAgentRepo{}),
-		Commands:   inventory.NewListCommandsUseCase(&fakeCommandRepo{}),
-		GetCommand: appcommand.NewGetCommandUseCase(&dispatchRepo{}),
-		Dispatch:   newDispatch(&dispatchRepo{}),
-		ReadOnly:   false,
-	})
-
-	seen := toolNames(ts)
-	for _, want := range []string{"workflow_deploy", "workflow_diagnose", "file_read", "filesystem_list", "docker_inspect"} {
-		if !seen[want] {
-			t.Fatalf("opt-in toolset must include %s", want)
-		}
-	}
+func depsWithMode(mode string) Dependencies {
+	d := deps()
+	d.Mode = mode
+	return d
 }

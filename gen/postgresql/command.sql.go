@@ -14,13 +14,15 @@ import (
 )
 
 const createCommand = `-- name: CreateCommand :one
-INSERT INTO commands (agent_id, tool_name, payload, status, confirmation_status)
+INSERT INTO commands (agent_id, tool_name, payload, status, confirmation_status, source, requested_by)
 VALUES (
     $1,
     $2,
     $3,
     'pending',
-    $4
+    $4,
+    $5,
+    $6
 )
 RETURNING id, status
 `
@@ -30,6 +32,8 @@ type CreateCommandParams struct {
 	ToolName           string
 	Payload            []byte
 	ConfirmationStatus string
+	Source             string
+	RequestedBy        string
 }
 
 type CreateCommandRow struct {
@@ -38,13 +42,16 @@ type CreateCommandRow struct {
 }
 
 // Persist a new command in pending state. confirmation_status is resolved
-// from the target tool's capability ('approved' or 'pending').
+// from the target tool's capability ('approved' or 'pending'). source and
+// requested_by are the immutable audit origin of the command.
 func (q *Queries) CreateCommand(ctx context.Context, arg CreateCommandParams) (CreateCommandRow, error) {
 	row := q.db.QueryRow(ctx, createCommand,
 		arg.AgentID,
 		arg.ToolName,
 		arg.Payload,
 		arg.ConfirmationStatus,
+		arg.Source,
+		arg.RequestedBy,
 	)
 	var i CreateCommandRow
 	err := row.Scan(&i.ID, &i.Status)
@@ -54,7 +61,8 @@ func (q *Queries) CreateCommand(ctx context.Context, arg CreateCommandParams) (C
 const getCommandResult = `-- name: GetCommandResult :one
 SELECT id, agent_id, tool_name, payload, status, result, error,
        confirmation_status, leased_at, lease_owner, started_at, completed_at,
-       confirmed_at, created_at, updated_at
+       confirmed_at, created_at, updated_at,
+       source, requested_by, requested_at, approved_by, approved_at, approval_note
 FROM commands
 WHERE id = $1
 `
@@ -75,6 +83,12 @@ type GetCommandResultRow struct {
 	ConfirmedAt        pgtype.Timestamptz
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	Source             string
+	RequestedBy        string
+	RequestedAt        time.Time
+	ApprovedBy         pgtype.Text
+	ApprovedAt         pgtype.Timestamptz
+	ApprovalNote       pgtype.Text
 }
 
 // Fetch a command's full current state and result. The result payload is
@@ -98,6 +112,12 @@ func (q *Queries) GetCommandResult(ctx context.Context, id uuid.UUID) (GetComman
 		&i.ConfirmedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.Source,
+		&i.RequestedBy,
+		&i.RequestedAt,
+		&i.ApprovedBy,
+		&i.ApprovedAt,
+		&i.ApprovalNote,
 	)
 	return i, err
 }
