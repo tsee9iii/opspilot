@@ -25,18 +25,39 @@ type Agent struct {
 	cfg      *Config
 	log      *zap.Logger
 	http     *http.Client
+	sseHTTP  *http.Client
 	executor Executor
 	registry *Registry
+
+	// sse tuning. Production defaults are the package constants; tests may
+	// override them to keep reconnect tests fast and deterministic.
+	sseInitialBackoff time.Duration
+	sseMaxBackoff     time.Duration
+	sseStable         time.Duration
 }
 
 func New(cfg *Config, log *zap.Logger, executor Executor, registry *Registry) *Agent {
 	return &Agent{
-		cfg:      cfg,
-		log:      log,
-		http:     &http.Client{Timeout: registerTimeout},
-		executor: executor,
-		registry: registry,
+		cfg:               cfg,
+		log:               log,
+		http:              &http.Client{Timeout: registerTimeout},
+		sseHTTP:           newSSEClient(),
+		executor:          executor,
+		registry:          registry,
+		sseInitialBackoff: sseInitialBackoff,
+		sseMaxBackoff:     sseMaxBackoff,
+		sseStable:         sseStableConnected,
 	}
+}
+
+// newSSEClient returns the HTTP client used for the long-lived SSE wake-up
+// stream. It deliberately has NO overall request timeout (the stream lives as
+// long as the connection), while retaining the safe defaults of the standard
+// transport: connection timeout, TLS handshake timeout, and full TLS
+// verification — production HTTPS requirements are never weakened.
+func newSSEClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	return &http.Client{Transport: transport}
 }
 
 func (a *Agent) Run(ctx context.Context) error {
@@ -63,7 +84,16 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	interval := a.pollInterval()
 	a.log.Info("agent command loop started", zap.Duration("interval", interval))
-	return a.pollCommands(ctx, interval)
+
+	wake := make(chan struct{}, 1)
+	if a.cfg.IsSSEEnabled() {
+		a.log.Info("agent SSE wake-up listener started")
+		go a.runSSEListener(ctx, wake)
+	} else {
+		a.log.Info("agent SSE wake-up listener disabled; using fallback polling only")
+	}
+
+	return a.pollCommands(ctx, interval, wake)
 }
 
 func (a *Agent) healthReportInterval() time.Duration {

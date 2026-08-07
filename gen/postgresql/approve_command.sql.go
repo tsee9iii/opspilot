@@ -22,7 +22,7 @@ SET confirmation_status = 'approved',
     updated_at = now()
 WHERE id = $3
   AND confirmation_status = 'pending'
-RETURNING id, confirmation_status, confirmed_at, approved_at, approved_by
+RETURNING id, agent_id, confirmation_status, confirmed_at, approved_at, approved_by
 `
 
 type ApproveCommandParams struct {
@@ -33,6 +33,7 @@ type ApproveCommandParams struct {
 
 type ApproveCommandRow struct {
 	ID                 uuid.UUID
+	AgentID            uuid.UUID
 	ConfirmationStatus string
 	ConfirmedAt        pgtype.Timestamptz
 	ApprovedAt         pgtype.Timestamptz
@@ -49,6 +50,7 @@ func (q *Queries) ApproveCommand(ctx context.Context, arg ApproveCommandParams) 
 	var i ApproveCommandRow
 	err := row.Scan(
 		&i.ID,
+		&i.AgentID,
 		&i.ConfirmationStatus,
 		&i.ConfirmedAt,
 		&i.ApprovedAt,

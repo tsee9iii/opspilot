@@ -8,6 +8,7 @@ import (
 
 type fakeRepo struct {
 	created       []CreateCommandRequest
+	createErr     error
 	leasedReq     LeaseCommandRequest
 	approveResult ApproveCommandResponse
 	approveErr    error
@@ -17,6 +18,9 @@ type fakeRepo struct {
 
 func (r *fakeRepo) CreateCommand(_ context.Context, req CreateCommandRequest) (CreateCommandResponse, error) {
 	r.created = append(r.created, req)
+	if r.createErr != nil {
+		return CreateCommandResponse{}, r.createErr
+	}
 	return CreateCommandResponse{CommandID: "cmd-1", Status: StatusPending}, nil
 }
 

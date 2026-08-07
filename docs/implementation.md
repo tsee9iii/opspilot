@@ -184,15 +184,26 @@ Indexes: `idx_agents_server_id`, `idx_commands_agent_id`, `idx_commands_status`,
 - Config from YAML (§9), path via `OPSPILOT_AGENT_CONFIG` (default `agent.yaml`).
 - **Startup**: if `agent_id` is empty, register (persist `agent_id` back to the
   config file, mode `0600`), then sync capabilities (§6), then start the
-  heartbeat loop and the command poll loop.
+  heartbeat loop, the SSE wake-up listener (if `sse_enabled`), and the command
+  poll loop.
 - **Heartbeat loop** (goroutine): `POST /api/v1/agents/heartbeat` every 30s,
   then sleeps the server-provided `next_heartbeat`.
-- **Command poll loop** (main): every `poll_interval` (default 5s):
-  lease one command → `start` it → execute via the executor → `complete` with
-  the result or `fail` with the error. A `204` (empty queue) sleeps until the
-  next tick. The executor validates the leased payload against the tool's
-  parameter schema before running it; an invalid payload fails the command via
-  the normal `fail` transition.
+- **SSE wake-up listener** (goroutine, if `sse_enabled`): keeps a signed GET
+  stream open to `/api/v1/agents/events`. It parses SSE frames, ignores
+  everything except `event: wakeup`, and signals the poll loop to lease
+  immediately. It reconnects on failure with exponential backoff (1s → 30s,
+  ±30% jitter, reset after 60s stable) and signals a poll after every
+  disconnect so no command is delayed. The stream carries only the wake-up
+  notice — command payloads and results still flow over the signed
+  lease/complete endpoints.
+- **Command poll loop** (main): on each tick and on each SSE wake-up: lease one
+  command → `start` it → execute via the executor → `complete` with the result
+  or `fail` with the error. A `204` (empty queue) sleeps until the next wake-up
+  or tick. With SSE enabled, `poll_interval` (default 30s) is a recovery
+  fallback; with SSE disabled it is the only delivery path (lower to 2–5s).
+  The executor validates the leased payload against the tool's parameter schema
+  before running it; an invalid payload fails the command via the normal `fail`
+  transition.
 - SIGINT/SIGTERM cancel the context; the loops exit cleanly.
 
 ## 5. Tool Registry

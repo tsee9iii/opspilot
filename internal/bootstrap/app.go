@@ -27,6 +27,7 @@ import (
 	"github.com/tsee9iii/opspilot/internal/infrastructure/security"
 	"github.com/tsee9iii/opspilot/internal/infrastructure/webhook"
 	"github.com/tsee9iii/opspilot/internal/migration"
+	"github.com/tsee9iii/opspilot/internal/notify"
 	httpx "github.com/tsee9iii/opspilot/internal/transport/http"
 	"github.com/tsee9iii/opspilot/pkg/config"
 	"github.com/tsee9iii/opspilot/pkg/logger"
@@ -41,6 +42,9 @@ type App struct {
 	// evaluator runs the in-process alert rules. It is nil when alerting is
 	// disabled.
 	evaluator *appalert.Evaluator
+	// notifier is the in-memory agent wake-up channel. It is closed during
+	// shutdown so active SSE streams end cleanly.
+	notifier *notify.Notifier
 }
 
 func New(ctx context.Context) (*App, error) {
@@ -81,7 +85,7 @@ func New(ctx context.Context) (*App, error) {
 		log.Info("database migrations applied", zap.Int("count", len(applied)))
 	}
 
-	return &App{cfg: cfg, log: log, pool: pool}, nil
+	return &App{cfg: cfg, log: log, pool: pool, notifier: notify.New()}, nil
 }
 
 func (a *App) Run(ctx context.Context) error {
@@ -123,6 +127,11 @@ func (a *App) Run(ctx context.Context) error {
 		a.log.Info("shutdown signal received", zap.String("signal", sig.String()))
 	}
 
+	// Cancel all SSE streams first so their handlers return and the connections
+	// become idle; then the graceful drain below closes them promptly instead of
+	// waiting for the Shutdown timeout.
+	a.notifier.Close()
+
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelShutdown()
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -147,10 +156,10 @@ func (a *App) buildHandler() http.Handler {
 	unregisterUC := agent.NewUnregisterUseCase(agentRepo)
 	commandRepo := postgres.NewCommandRepository(a.pool)
 	capabilityRepo := postgres.NewCapabilityRepository(a.pool)
-	createCommandUC := appcommand.NewCreateUseCase(commandRepo, capabilityRepo)
+	createCommandUC := appcommand.NewCreateUseCase(commandRepo, capabilityRepo, a.notifier)
 	leaseCommandUC := appcommand.NewLeaseUseCase(commandRepo, time.Duration(a.cfg.Commands.LeaseTTLSeconds)*time.Second)
 	executionCommandUC := appcommand.NewExecutionUseCase(commandRepo)
-	approvalCommandUC := appcommand.NewApprovalUseCase(commandRepo)
+	approvalCommandUC := appcommand.NewApprovalUseCase(commandRepo, a.notifier)
 	getCommandUC := appcommand.NewGetCommandUseCase(commandRepo)
 	capabilityUC := appcapability.NewSyncUseCase(agentRepo, capabilityRepo)
 
@@ -174,6 +183,7 @@ func (a *App) buildHandler() http.Handler {
 			Agents:        agentRepo,
 			OperatorToken: a.cfg.Auth.OperatorToken,
 			Logger:        a.log,
+			Events:        httpx.NewAgentEventHandler(a.notifier),
 		},
 		httpx.NewAgentHandler(registerUC, heartbeatUC, unregisterUC),
 		httpx.NewCommandHandler(createCommandUC, leaseCommandUC, executionCommandUC, approvalCommandUC, getCommandUC),

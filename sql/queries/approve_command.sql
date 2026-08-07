@@ -13,4 +13,4 @@ SET confirmation_status = 'approved',
     updated_at = now()
 WHERE id = sqlc.arg('id')
   AND confirmation_status = 'pending'
-RETURNING id, confirmation_status, confirmed_at, approved_at, approved_by;
+RETURNING id, agent_id, confirmation_status, confirmed_at, approved_at, approved_by;

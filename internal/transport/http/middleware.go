@@ -40,6 +40,12 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
+// Unwrap lets http.NewResponseController reach the underlying ResponseWriter so
+// SSE streaming can clear the global write deadline and flush mid-response.
+func (r *statusRecorder) Unwrap() http.ResponseWriter {
+	return r.ResponseWriter
+}
+
 // Recovery converts a handler panic into a 500 response and logs the stack
 // trace. A single bad request can never crash the server.
 func Recovery(log *zap.Logger) func(http.Handler) http.Handler {

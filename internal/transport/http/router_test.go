@@ -13,6 +13,7 @@ import (
 	"github.com/tsee9iii/opspilot/internal/agentsign"
 	appcommand "github.com/tsee9iii/opspilot/internal/application/command"
 	domainagent "github.com/tsee9iii/opspilot/internal/domain/agent"
+	"github.com/tsee9iii/opspilot/internal/notify"
 )
 
 // createRouterFixture builds a router whose command handler is backed by a real
@@ -25,6 +26,7 @@ func createRouterFixture(t *testing.T, token string) http.Handler {
 			Agents:        &stubAgentStore{agents: map[uuid.UUID]*domainagent.Agent{}},
 			OperatorToken: token,
 			Logger:        zap.NewNop(),
+			Events:        NewAgentEventHandler(notify.New()),
 		},
 		NewAgentHandler(nil, nil, nil),
 		NewCommandHandler(appcommand.NewCreateUseCase(&stubCommandRepo{}, &stubConfirmationResolver{}), nil, nil, nil, nil),
@@ -77,6 +79,7 @@ func newRouterFixture(t *testing.T, token string) http.Handler {
 			Agents:        &stubAgentStore{agents: map[uuid.UUID]*domainagent.Agent{}},
 			OperatorToken: token,
 			Logger:        zap.NewNop(),
+			Events:        NewAgentEventHandler(notify.New()),
 		},
 		NewAgentHandler(nil, nil, nil),
 		NewCommandHandler(nil, nil, nil, nil, nil),
@@ -228,6 +231,7 @@ func TestRouterAgentRoutesRequireSignature(t *testing.T) {
 		httptest.NewRequest(http.MethodPost, "/api/v1/commands/complete", strings.NewReader(`{}`)),
 		httptest.NewRequest(http.MethodPost, "/api/v1/commands/fail", strings.NewReader(`{}`)),
 		httptest.NewRequest(http.MethodPost, "/api/v1/capabilities", strings.NewReader(`{}`)),
+		httptest.NewRequest(http.MethodGet, "/api/v1/agents/events", nil),
 	}
 	for _, req := range requests {
 		rec := httptest.NewRecorder()
@@ -249,6 +253,7 @@ func TestRouterAgentRoutesAcceptSignedRequest(t *testing.T) {
 			Agents:        store,
 			OperatorToken: "op-token",
 			Logger:        zap.NewNop(),
+			Events:        NewAgentEventHandler(notify.New()),
 		},
 		NewAgentHandler(nil, nil, nil),
 		NewCommandHandler(nil, nil, nil, nil, nil),

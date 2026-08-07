@@ -303,16 +303,26 @@ The file and HTTP tools are fail-closed:
 
 In a production environment (`server.environment: production`) the agent refuses to start unless `central_url` uses `https://`; `allow_insecure_central: true` is the development-only escape hatch for a TLS-terminating proxy.
 
-### Command loop
+### Command loop and SSE wake-ups
 
-The agent polls on a configurable interval. Each iteration: lease one command → `start` it → execute the tool → `complete` with the result or `fail` with the error. An empty queue (`204`) just sleeps until the next tick.
+The agent leases commands from central on an interval and on SSE wake-ups. Each cycle: lease one command → `start` it → execute the tool → `complete` with the result or `fail` with the error. An empty queue (`204`) just sleeps until the next wake-up or poll tick.
+
+**SSE wake-up channel.** By default (`sse_enabled: true`) the agent also keeps a signed SSE stream open to `GET /api/v1/agents/events` on central. Central pushes a heartbeat every 15s and an `event: wakeup` whenever a leasable command appears for that agent; the agent responds by leasing immediately. This drops interactive Milo/Hermes command latency from the poll interval to roughly one authenticated round trip.
+
+- **Wake-up only, never command data.** The SSE payload is just `{"agent_id": ..., "reason": "command_available"}`. Command payloads, secrets, approval decisions, and results are never sent over SSE — the agent always fetches the next command from the signed `POST /api/v1/commands/lease` endpoint, which remains the source of truth. A lost, duplicated, or reordered wake-up is therefore harmless; the fallback poll and the next wake-up reconcile anyway.
+- **Single active stream per agent.** A reconnecting agent replaces its previous stream (idle streams are canceled), so duplicate connections can never double-deliver work.
+- **Polling stays as fallback.** `poll_interval` (default 30s) is a recovery mechanism for startup, SSE disconnects, or a central without the SSE handler. On any SSE disconnect the agent wakes immediately so a command is not delayed. If SSE is disabled, lower `poll_interval` (e.g. 2–5s) since polling becomes the only delivery path.
+- **Reconnect policy.** On disconnect the agent reconnects with exponential backoff (1s initial, 30s max, ±30% jitter), resetting to 1s after 60s of stable connection.
+- **Timeout handling.** Central's global HTTP server write timeout (~30s) is cleared for the SSE handler only via `http.NewResponseController` and re-armed as a 30s per-write deadline; non-SSE endpoints keep their existing timeout.
+- **Notifier wiring.** Central notifies through an in-memory `AgentNotifier` from the command application layer, so both the HTTP API and the in-process MCP dispatch path (which funnels through the same create/approve use cases) trigger wake-ups. Commands created by MCP operators are always `pending` and never wake an agent at creation; approval of a pending command wakes the target agent.
+- **Single-process scope.** The notifier is in-memory, so wake-ups are only delivered while the agent's stream is connected to the same central process. Multi-instance central would need PostgreSQL `LISTEN`/`NOTIFY` or a broker; polling remains correct regardless.
 
 ## Configuration
 
 | Binary   | Source                      | Keys (examples) |
 | -------- | --------------------------- | --------------- |
 | central  | env (`OPSPILOT_*`)          | `OPSPILOT_HTTP_PORT`, `OPSPILOT_DB_HOST`, `OPSPILOT_AUTH_SERVER_SECRET`, `OPSPILOT_OPERATOR_TOKEN`, `OPSPILOT_ALERTS_ENABLED`, `OPSPILOT_ALERTS_INTERVAL_SECONDS`, `OPSPILOT_ALERTS_DISK_USAGE_THRESHOLD_PERCENT` (and sibling per-rule vars), `OPSPILOT_WEBHOOK_URL` / `OPSPILOT_WEBHOOK_SECRET` |
-| agent    | YAML (`configs/agent.example.yaml`) | `central_url`, `registration_token`, `secret`, `poll_interval`, `health_report_interval`, `execution_policy`, `allow_insecure_central`, `filesystem.allow_absolute_paths`, `http_check.*` |
+| agent    | YAML (`configs/agent.example.yaml`) | `central_url`, `registration_token`, `secret`, `sse_enabled`, `poll_interval`, `health_report_interval`, `execution_policy`, `allow_insecure_central`, `filesystem.allow_absolute_paths`, `http_check.*` |
 | mcp      | env (`OPSPILOT_*`)          | `OPSPILOT_DB_HOST`, `OPSPILOT_MCP_MODE` (`inventory` default, `investigate`, `operate`); deprecated `OPSPILOT_MCP_READ_ONLY` |
 
 ## Installer hardening

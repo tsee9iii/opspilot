@@ -177,6 +177,7 @@ func (r *CommandRepository) ApproveCommand(ctx context.Context, req appcommand.A
 		return appcommand.ApproveCommandResponse{
 			CommandID: row.ID.String(),
 			Status:    appcommand.ConfirmationApproved,
+			AgentID:   row.AgentID,
 		}, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -195,6 +196,7 @@ func (r *CommandRepository) ApproveCommand(ctx context.Context, req appcommand.A
 	return appcommand.ApproveCommandResponse{
 		CommandID: cmd.ID.String(),
 		Status:    appcommand.ConfirmationApproved,
+		AgentID:   cmd.AgentID,
 	}, nil
 }
 

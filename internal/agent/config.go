@@ -25,7 +25,15 @@ type Config struct {
 	Version           string     `yaml:"version"`
 	Server            ServerInfo `yaml:"server"`
 	AgentID           string     `yaml:"agent_id"`
-	PollInterval      int        `yaml:"poll_interval"`
+	// PollInterval is the fallback command-poll interval in seconds. With SSE
+	// enabled (the default) it is a recovery mechanism for disconnections and
+	// startup, so the default is a conservative 30s; when SSE is disabled it is
+	// the only delivery path and should be lowered. Zero uses the default.
+	PollInterval int `yaml:"poll_interval"`
+	// SSEEnabled is a pointer so an unset key defaults to true (SSE wake-ups
+	// on). Set `sse_enabled: false` to disable the SSE listener and rely on
+	// fallback polling only.
+	SSEEnabled *bool `yaml:"sse_enabled"`
 	// HealthReportInterval is how often the agent submits a full health report
 	// to central. Zero uses the default of 60s.
 	HealthReportInterval int                   `yaml:"health_report_interval"`
@@ -163,6 +171,15 @@ func (c *Config) ValidateRegistration() error {
 		return errors.New("agent config: server.environment is required")
 	}
 	return nil
+}
+
+// IsSSEEnabled reports whether the SSE wake-up listener should run. It defaults
+// to true when `sse_enabled` is unset.
+func (c *Config) IsSSEEnabled() bool {
+	if c.SSEEnabled == nil {
+		return true
+	}
+	return *c.SSEEnabled
 }
 
 // Policy resolves the execution policy from config. When the policy section is

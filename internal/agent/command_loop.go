@@ -11,7 +11,14 @@ import (
 	"go.uber.org/zap"
 )
 
-const defaultPollInterval = 5 * time.Second
+const (
+	// defaultPollInterval is the fallback command-poll interval used when the
+	// config does not set poll_interval. With the SSE wake-up stream enabled
+	// (the default) polling is a recovery mechanism for disconnections and
+	// startup, so it is deliberately conservative. When SSE is disabled this
+	// interval is the only delivery path and should be lowered.
+	defaultPollInterval = 30 * time.Second
+)
 
 var errNoPendingCommands = errors.New("no pending commands")
 
@@ -22,8 +29,13 @@ type leasedCommand struct {
 }
 
 // pollCommands runs the lease -> start -> execute -> report loop until the
-// context is cancelled.
-func (a *Agent) pollCommands(ctx context.Context, interval time.Duration) error {
+// context is cancelled. The wake channel carries SSE wake-up signals: each one
+// triggers an immediate lease attempt. Wakes are coalesced (the channel holds
+// at most one pending signal) and are only observed between pollOnce calls, so
+// command execution stays strictly sequential — a wake during an active
+// execution never causes a concurrent run. The fallback timer still fires on
+// interval, which covers SSE loss and disabled SSE.
+func (a *Agent) pollCommands(ctx context.Context, interval time.Duration, wake <-chan struct{}) error {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 
@@ -37,7 +49,20 @@ func (a *Agent) pollCommands(ctx context.Context, interval time.Duration) error 
 				a.log.Warn("command poll failed", zap.Error(err))
 			}
 			timer.Reset(interval)
+		case <-wake:
+			if err := a.pollOnce(ctx); err != nil {
+				a.log.Warn("command poll failed", zap.Error(err))
+			}
 		}
+	}
+}
+
+// signalWake delivers a wake-up to the command loop without blocking. If a
+// wake is already pending it is coalesced and dropped.
+func signalWake(wake chan<- struct{}) {
+	select {
+	case wake <- struct{}{}:
+	default:
 	}
 }
 

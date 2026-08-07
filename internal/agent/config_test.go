@@ -282,3 +282,42 @@ secret: secret
 		t.Fatalf("expected empty http_check allowlists, got %+v", cfg.HTTPCheck)
 	}
 }
+
+// TestLoadConfigSSEDefaults pins that SSE wake-ups are enabled by default and
+// poll_interval is unset (the agent then uses the conservative recovery
+// default).
+func TestLoadConfigSSEDefaults(t *testing.T) {
+	path := writeAgentConfig(t, `central_url: http://localhost:8080
+registration_token: tok
+secret: secret
+`)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.IsSSEEnabled() {
+		t.Fatal("expected SSE to default to enabled")
+	}
+	if cfg.PollInterval != 0 {
+		t.Fatalf("expected poll_interval to be unset, got %d", cfg.PollInterval)
+	}
+}
+
+func TestLoadConfigSSEDisabled(t *testing.T) {
+	path := writeAgentConfig(t, `central_url: http://localhost:8080
+registration_token: tok
+secret: secret
+sse_enabled: false
+poll_interval: 2
+`)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.IsSSEEnabled() {
+		t.Fatal("expected SSE to be disabled")
+	}
+	if cfg.PollInterval != 2 {
+		t.Fatalf("expected poll_interval 2, got %d", cfg.PollInterval)
+	}
+}

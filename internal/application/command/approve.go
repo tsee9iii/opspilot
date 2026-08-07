@@ -29,19 +29,40 @@ type ApproveCommandRequest struct {
 type ApproveCommandResponse struct {
 	CommandID string
 	Status    string
+	// AgentID is the target agent the approved command belongs to. It is
+	// populated so the caller can wake the correct agent once the command is
+	// leasable.
+	AgentID uuid.UUID
 }
 
 type ApprovalUseCase struct {
-	repo Repository
+	repo     Repository
+	notifier Notifier
 }
 
-func NewApprovalUseCase(repo Repository) *ApprovalUseCase {
-	return &ApprovalUseCase{repo: repo}
+// NewApprovalUseCase builds the approval use case. A notifier may be passed to
+// wake the target agent after a pending command is released; it is optional.
+func NewApprovalUseCase(repo Repository, notifiers ...Notifier) *ApprovalUseCase {
+	uc := &ApprovalUseCase{repo: repo}
+	if len(notifiers) > 0 {
+		uc.notifier = notifiers[0]
+	}
+	return uc
 }
 
 func (uc *ApprovalUseCase) Approve(ctx context.Context, req ApproveCommandRequest) (ApproveCommandResponse, error) {
 	if _, err := uuid.Parse(req.CommandID); err != nil {
 		return ApproveCommandResponse{}, ErrInvalidCommandID
 	}
-	return uc.repo.ApproveCommand(ctx, req)
+	resp, err := uc.repo.ApproveCommand(ctx, req)
+	if err != nil {
+		return resp, err
+	}
+	// Approving releases the command for leasing; wake the target agent so it
+	// calls the lease endpoint immediately instead of waiting for the fallback
+	// poll.
+	if uc.notifier != nil && resp.AgentID != uuid.Nil {
+		uc.notifier.Notify(resp.AgentID.String())
+	}
+	return resp, nil
 }

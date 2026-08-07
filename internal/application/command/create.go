@@ -57,6 +57,15 @@ type ConfirmationResolver interface {
 	ConfirmationLevel(ctx context.Context, agentID uuid.UUID, toolName string) (string, error)
 }
 
+// Notifier signals a target agent that a leasable command may be available so
+// it can immediately call the authenticated lease endpoint. Implementations
+// must be non-blocking and safe for concurrent use; delivery is best-effort.
+// The notifier is optional: nil (or no notifier) disables wake-ups and the
+// agent falls back to polling.
+type Notifier interface {
+	Notify(agentID string)
+}
+
 // Repository defines the persistence contract required by the command use cases.
 type Repository interface {
 	CreateCommand(ctx context.Context, req CreateCommandRequest) (CreateCommandResponse, error)
@@ -69,12 +78,19 @@ type Repository interface {
 }
 
 type CreateUseCase struct {
-	repo    Repository
-	confirm ConfirmationResolver
+	repo     Repository
+	confirm  ConfirmationResolver
+	notifier Notifier
 }
 
-func NewCreateUseCase(repo Repository, confirm ConfirmationResolver) *CreateUseCase {
-	return &CreateUseCase{repo: repo, confirm: confirm}
+// NewCreateUseCase builds the creation use case. A notifier may be passed to
+// wake the target agent once a leasable command is persisted; it is optional.
+func NewCreateUseCase(repo Repository, confirm ConfirmationResolver, notifiers ...Notifier) *CreateUseCase {
+	uc := &CreateUseCase{repo: repo, confirm: confirm}
+	if len(notifiers) > 0 {
+		uc.notifier = notifiers[0]
+	}
+	return uc
 }
 
 func (uc *CreateUseCase) Create(ctx context.Context, req CreateCommandRequest) (CreateCommandResponse, error) {
@@ -112,5 +128,15 @@ func (uc *CreateUseCase) Create(ctx context.Context, req CreateCommandRequest) (
 	if req.Source == "" {
 		req.Source = SourceAPI
 	}
-	return uc.repo.CreateCommand(ctx, req)
+	resp, err := uc.repo.CreateCommand(ctx, req)
+	if err != nil {
+		return CreateCommandResponse{}, err
+	}
+	// Wake the agent only after the command is durably persisted AND actually
+	// leasable now. Commands awaiting operator approval are never announced at
+	// creation; the operator's later approval releases them.
+	if req.ConfirmationStatus == ConfirmationApproved && uc.notifier != nil {
+		uc.notifier.Notify(agentID.String())
+	}
+	return resp, nil
 }

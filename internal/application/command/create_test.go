@@ -191,3 +191,90 @@ func TestCreateValidation(t *testing.T) {
 		})
 	}
 }
+
+type recordingNotifier struct {
+	notified []string
+}
+
+func (n *recordingNotifier) Notify(agentID string) {
+	n.notified = append(n.notified, agentID)
+}
+
+// TestCreateNotifiesWhenLeasableNow proves a successfully persisted,
+// operator-approved command wakes the target agent immediately.
+func TestCreateNotifiesWhenLeasableNow(t *testing.T) {
+	agentID := uuid.New()
+	n := &recordingNotifier{}
+	uc := NewCreateUseCase(&fakeRepo{}, &fakeResolver{level: func(uuid.UUID, string) (string, error) {
+		return "none", nil
+	}}, n)
+
+	if _, err := uc.Create(context.Background(), CreateCommandRequest{
+		AgentID: agentID.String(), Tool: "system.uptime", Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(n.notified) != 1 || n.notified[0] != agentID.String() {
+		t.Fatalf("expected wake for %s, got %v", agentID, n.notified)
+	}
+}
+
+// TestCreateDoesNotNotifyPendingApproval proves commands awaiting human
+// approval never wake the agent at creation; the approval releases them later.
+func TestCreateDoesNotNotifyPendingApproval(t *testing.T) {
+	agentID := uuid.New()
+	n := &recordingNotifier{}
+	uc := NewCreateUseCase(&fakeRepo{}, &fakeResolver{level: func(uuid.UUID, string) (string, error) {
+		return ConfirmationRequiredLevel, nil
+	}}, n)
+
+	if _, err := uc.Create(context.Background(), CreateCommandRequest{
+		AgentID: agentID.String(), Tool: "pm2.restart", Payload: []byte(`{"process":"web"}`),
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(n.notified) != 0 {
+		t.Fatalf("pending-approval command must not wake the agent, got %v", n.notified)
+	}
+}
+
+// TestCreateMCPNeverNotifiesAtCreation proves MCP-created commands are always
+// pending and therefore never wake the agent at creation, even for tools whose
+// capability metadata would auto-approve.
+func TestCreateMCPNeverNotifiesAtCreation(t *testing.T) {
+	agentID := uuid.New()
+	n := &recordingNotifier{}
+	uc := NewCreateUseCase(&fakeRepo{}, &fakeResolver{level: func(uuid.UUID, string) (string, error) {
+		return "none", nil
+	}}, n)
+
+	if _, err := uc.Create(context.Background(), CreateCommandRequest{
+		AgentID: agentID.String(), Tool: "system.uptime", Payload: []byte(`{}`),
+		Source: SourceMCP, RequestedBy: "hermes",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(n.notified) != 0 {
+		t.Fatalf("MCP command must not wake at creation, got %v", n.notified)
+	}
+}
+
+// TestCreateNotifiesOnlyAfterPersist proves a failed persistence never wakes
+// the agent.
+func TestCreateNotifiesOnlyAfterPersist(t *testing.T) {
+	agentID := uuid.New()
+	n := &recordingNotifier{}
+	repo := &fakeRepo{createErr: errors.New("db down")}
+	uc := NewCreateUseCase(repo, &fakeResolver{level: func(uuid.UUID, string) (string, error) {
+		return "none", nil
+	}}, n)
+
+	if _, err := uc.Create(context.Background(), CreateCommandRequest{
+		AgentID: agentID.String(), Tool: "system.uptime", Payload: []byte(`{}`),
+	}); err == nil {
+		t.Fatal("expected persistence error")
+	}
+	if len(n.notified) != 0 {
+		t.Fatalf("no wake may be sent when persistence fails, got %v", n.notified)
+	}
+}
