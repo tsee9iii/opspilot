@@ -4,7 +4,7 @@
 package version
 
 // Central is the OpsPilot Central version.
-const Central = "0.1.0"
+const Central = "0.2.4"
 
 // MCP is the OpsPilot MCP server version.
-const MCP = "1.0.0"
+const MCP = "1.1.0"
